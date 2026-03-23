@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Trackr icon">
+  <defs>
+    <linearGradient id="trackr-bg" x1="12" y1="10" x2="52" y2="54" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#eff8f2" />
+      <stop offset="1" stop-color="#dcecff" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#trackr-bg)" />
+  <rect x="14" y="38" width="8" height="12" rx="4" fill="#e24a4a" />
+  <rect x="28" y="20" width="8" height="30" rx="4" fill="#149954" />
+  <rect x="42" y="28" width="8" height="22" rx="4" fill="#5674e2" />
+  <path
+    d="M12 17c6.5-3.5 13.7-5.2 21.6-5.2 6.2 0 12.3 1.1 18.4 3.4"
+    fill="none"
+    stroke="#11212d"
+    stroke-linecap="round"
+    stroke-width="3.5"
+  />
+</svg>
