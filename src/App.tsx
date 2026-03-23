@@ -17,6 +17,7 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import UpdateChecker from "./UpdateChecker";
 import "./App.css";
 
 type SleepWindow = {
@@ -1461,6 +1462,7 @@ const App = () => {
 
   return (
     <main className="app-shell">
+      <UpdateChecker />
       <header className="top-header">
         <div>
           <p className="eyebrow">Trackr</p>

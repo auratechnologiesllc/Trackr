@@ -1617,7 +1617,8 @@ pub fn run() {
             show_main_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_process::init());
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     let builder = builder.plugin(

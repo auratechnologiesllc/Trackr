@@ -1436,3 +1436,59 @@ h1 {
     transition: none;
   }
 }
+
+/* Auto-update banner */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: linear-gradient(135deg, #e8f5ff, #d5ebff);
+  border: 1px solid rgba(136, 159, 197, 0.3);
+  border-radius: 12px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.update-btn {
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: none;
+  background: var(--action);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.update-btn:hover {
+  background: var(--action-dark);
+}
+
+.update-dismiss {
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.update-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(136, 159, 197, 0.2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  background: var(--green-dark);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
