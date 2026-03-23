@@ -56,6 +56,9 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          VITE_PAYWALL_API_BASE_URL: ${{ secrets.VITE_PAYWALL_API_BASE_URL }}
+          TRACKR_PAYWALL_PUBLIC_KEY_DER_BASE64: ${{ secrets.TRACKR_PAYWALL_PUBLIC_KEY_DER_BASE64 }}
+          TAURI_BUNDLER_DMG_IGNORE_CI: true
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Trackr ${{ github.ref_name }}"
