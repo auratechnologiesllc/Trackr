@@ -662,7 +662,11 @@ const App = () => {
     if (appMode !== "permissions" || !pageVisible) return;
 
     let active = true;
+    let timer: number | null = null;
+    let polling = false;
     const refresh = async () => {
+      if (!active || polling) return;
+      polling = true;
       try {
         const status = await refreshTrackingPermissionStatus();
         if (!active) return;
@@ -681,25 +685,35 @@ const App = () => {
             "Trackr couldn't verify background tracking access.",
           ),
         );
+      } finally {
+        polling = false;
+        if (active) {
+          timer = window.setTimeout(() => {
+            void refresh();
+          }, 3_000);
+        }
       }
     };
 
     void refresh();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, 3_000);
 
     return () => {
       active = false;
-      window.clearInterval(timer);
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
     };
   }, [appMode, pageVisible]);
 
   useEffect(() => {
     if (appMode !== "unlocked" || !pageVisible) return;
     let active = true;
+    let timer: number | null = null;
+    let polling = false;
 
     const refresh = async () => {
+      if (!active || polling) return;
+      polling = true;
       try {
         const permissionStatus = await refreshTrackingPermissionStatus();
         if (!active) return;
@@ -743,17 +757,23 @@ const App = () => {
           return;
         }
         setError(friendlyUserErrorMessage(fetchError, "Couldn't load your activity right now."));
+      } finally {
+        polling = false;
+        if (active) {
+          timer = window.setTimeout(() => {
+            void refresh();
+          }, 15_000);
+        }
       }
     };
 
     void refresh();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, 15_000);
 
     return () => {
       active = false;
-      window.clearInterval(timer);
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
     };
   }, [appMode, pageVisible]);
 
@@ -1175,20 +1195,24 @@ const App = () => {
     }
   };
 
-  const attemptEntitlementRefresh = async () => {
+  const attemptEntitlementRefresh = useEffectEvent(async () => {
     if (!paywallStatus || paywallStatus.status !== "unlocked") return;
     const nextStatus = await syncEntitlementIfDue(paywallStatus);
     setPaywallStatus(nextStatus);
     if (nextStatus.status === "locked") {
       setAppMode("locked");
     }
-  };
+  });
 
   useEffect(() => {
     if (!pollingSessionId || appMode === "unlocked" || !paywallStatus?.deviceId) return;
 
     let active = true;
+    let timer: number | null = null;
+    let polling = false;
     const poll = async () => {
+      if (!active || polling) return;
+      polling = true;
       try {
         const result = await fetchPaywallJson<CheckoutStatusResponse>(
           `/api/checkout/status?sessionId=${encodeURIComponent(
@@ -1247,17 +1271,23 @@ const App = () => {
         );
         setPollingMessage("Trackr couldn't finish unlocking automatically.");
         setPollingSessionId(null);
+      } finally {
+        polling = false;
+        if (active) {
+          timer = window.setTimeout(() => {
+            void poll();
+          }, 4_000);
+        }
       }
     };
 
     void poll();
-    const timer = window.setInterval(() => {
-      void poll();
-    }, 4_000);
 
     return () => {
       active = false;
-      window.clearInterval(timer);
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
     };
   }, [pollingSessionId, appMode, paywallStatus?.deviceId]);
 
@@ -1269,7 +1299,7 @@ const App = () => {
     return () => {
       window.clearInterval(timer);
     };
-  }, [appMode, paywallStatus]);
+  }, [appMode]);
 
   if (appMode === "loading") {
     return (

@@ -469,6 +469,9 @@ impl TrackerState {
         loop {
             let current = self.minute_activity.load(Ordering::Relaxed);
             let (current_minute, current_score) = unpack_minute_activity(current);
+            if current_minute == epoch_minute && activity_score_reached_threshold(current_score) {
+                return;
+            }
             let next_score = if current_minute == epoch_minute {
                 current_score
                     .saturating_add(delta_score)
@@ -493,20 +496,21 @@ impl TrackerState {
             return;
         }
 
-        if self.is_sleep_now() {
+        let now = Local::now();
+        let minute_of_day = (now.hour() * 60 + now.minute()) as usize;
+        if self.sleep_window().contains_minute(minute_of_day) {
             return;
         }
 
-        let now_utc = Utc::now();
         self.last_input_epoch
-            .store(now_utc.timestamp(), Ordering::Relaxed);
+            .store(now.timestamp(), Ordering::Relaxed);
 
         let delta_score = activity_score_delta(key_presses, mouse_movement_units);
         if delta_score == 0 {
             return;
         }
 
-        let epoch_minute = now_utc.timestamp().div_euclid(60);
+        let epoch_minute = now.timestamp().div_euclid(60);
         self.add_activity_score(epoch_minute, delta_score);
     }
 
@@ -562,12 +566,6 @@ impl TrackerState {
         self.update_sleep_window_cache(&normalized);
         self.persist_store()?;
         Ok(normalized)
-    }
-
-    fn is_sleep_now(&self) -> bool {
-        let now = Local::now();
-        let minute_of_day = (now.hour() * 60 + now.minute()) as usize;
-        self.sleep_window().contains_minute(minute_of_day)
     }
 
     fn sample_current_minute(&self) {
@@ -1002,14 +1000,9 @@ fn activity_delta(event_type: CGEventType, event: &CGEvent) -> Option<InputDelta
             key_presses: 1,
             mouse_movement_units: 0,
         }),
-        CGEventType::KeyUp
-        | CGEventType::FlagsChanged
-        | CGEventType::LeftMouseDown
-        | CGEventType::LeftMouseUp
-        | CGEventType::RightMouseDown
-        | CGEventType::RightMouseUp
-        | CGEventType::OtherMouseDown
-        | CGEventType::OtherMouseUp => Some(InputDelta::default()),
+        CGEventType::LeftMouseDown | CGEventType::RightMouseDown | CGEventType::OtherMouseDown => {
+            Some(InputDelta::default())
+        }
         CGEventType::MouseMoved
         | CGEventType::LeftMouseDragged
         | CGEventType::RightMouseDragged
@@ -1056,14 +1049,9 @@ fn spawn_input_listener(state: Arc<TrackerState>) {
             CGEventTapOptions::ListenOnly,
             vec![
                 CGEventType::KeyDown,
-                CGEventType::KeyUp,
-                CGEventType::FlagsChanged,
                 CGEventType::LeftMouseDown,
-                CGEventType::LeftMouseUp,
                 CGEventType::RightMouseDown,
-                CGEventType::RightMouseUp,
                 CGEventType::OtherMouseDown,
-                CGEventType::OtherMouseUp,
                 CGEventType::MouseMoved,
                 CGEventType::LeftMouseDragged,
                 CGEventType::RightMouseDragged,
@@ -1113,6 +1101,7 @@ fn spawn_input_listener(state: Arc<TrackerState>) {
         current_loop.add_source(&runloop_source, unsafe { kCFRunLoopCommonModes });
         event_tap.enable();
         CFRunLoop::run_current();
+        current_loop.remove_source(&runloop_source, unsafe { kCFRunLoopCommonModes });
 
         if state.listener_error().is_none() {
             state.set_listener_error("Input listener stopped unexpectedly, retrying".into());
@@ -1131,9 +1120,8 @@ fn spawn_input_listener(state: Arc<TrackerState>) {
         let result = listen_global_input(move |event| {
             let (key_presses, mouse_movement_units) = match event.event_type {
                 RdevEventType::KeyPress(_) => (1, 0),
-                RdevEventType::KeyRelease(_)
-                | RdevEventType::ButtonPress(_)
-                | RdevEventType::ButtonRelease(_) => (0, 0),
+                RdevEventType::KeyRelease(_) | RdevEventType::ButtonRelease(_) => return,
+                RdevEventType::ButtonPress(_) => (0, 0),
                 RdevEventType::MouseMove { x, y } => {
                     let current = (x, y);
                     let movement_units = last_cursor_position
