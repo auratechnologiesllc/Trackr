@@ -7,9 +7,6 @@ on:
         description: "Tag or ref to release"
         required: true
         default: "v1.0.2"
-  push:
-    tags:
-      - "v*"
 
 jobs:
   release:
@@ -29,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.ref || github.ref_name }}
+          ref: ${{ github.event.inputs.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -65,8 +62,8 @@ jobs:
           TRACKR_PAYWALL_PUBLIC_KEY_DER_BASE64: ${{ secrets.TRACKR_PAYWALL_PUBLIC_KEY_DER_BASE64 }}
           TAURI_BUNDLER_DMG_IGNORE_CI: true
         with:
-          tagName: ${{ github.event.inputs.ref || github.ref_name }}
-          releaseName: "Trackr ${{ github.event.inputs.ref || github.ref_name }}"
+          tagName: ${{ github.event.inputs.ref }}
+          releaseName: "Trackr ${{ github.event.inputs.ref }}"
           releaseBody: "See the assets below to download and install Trackr."
           releaseDraft: false
           prerelease: false
