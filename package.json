@@ -1,7 +1,7 @@
 {
   "name": "trackr",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,8 @@
     "tauri": "node ./scripts/run-tauri-with-env.mjs",
     "paywall:dev": "npm --prefix paywall-api run dev",
     "paywall:dev:demo": "TRACKR_PAYWALL_MODE=demo npm --prefix paywall-api run dev",
-    "paywall:test": "npm --prefix paywall-api run test"
+    "paywall:test": "npm --prefix paywall-api run test",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

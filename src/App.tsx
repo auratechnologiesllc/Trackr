@@ -6,8 +6,7 @@ import {
 } from "@tauri-apps/plugin-autostart";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
-import html2canvas from "html2canvas";
-import { createPortal } from "react-dom";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   useEffect,
   useEffectEvent,
@@ -17,6 +16,7 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import HoverTooltip, { type HoverTooltipHandle } from "./HoverTooltip";
 import UpdateChecker from "./UpdateChecker";
 import "./App.css";
 
@@ -29,6 +29,7 @@ type SleepWindow = {
 type TodayTimeline = {
   date: string;
   timeline: number[];
+  appTimeline?: (string | null)[];
   activeMinutes: number;
   idleMinutes: number;
   currentlyActive: boolean;
@@ -81,14 +82,11 @@ type SleepSettingsDraft = {
   endTime: string;
 };
 
-type HoverTooltip = {
-  text: string;
-  left: number;
-  top: number;
+type AppRuntimeProfile = {
+  startedHidden: boolean;
 };
 
 type HeatmapCell = HeatmapDay & { level: 0 | 1 | 2 | 3 | 4 };
-type ColorTheme = "evergreen" | "sunrise" | "ocean" | "dark";
 type ShareTarget = "x" | "reddit";
 type LockedPreviewBar = {
   tone: "active" | "idle";
@@ -100,7 +98,11 @@ const TIMELINE_BUCKET_MINUTES = 5;
 const MINUTES_PER_DAY = 1_440;
 const DEFAULT_SLEEP_START_MINUTE = 23 * 60;
 const DEFAULT_SLEEP_END_MINUTE = 7 * 60;
-const PAYWALL_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const DASHBOARD_PRIMARY_REFRESH_MS = 30_000;
+const DASHBOARD_SUPPLEMENTAL_REFRESH_MS = 5 * 60_000;
+const CHECKOUT_POLL_INITIAL_DELAY_MS = 4_000;
+const CHECKOUT_POLL_MAX_DELAY_MS = 20_000;
+const CHECKOUT_POLL_MAX_ELAPSED_MS = 10 * 60 * 1000;
 const PAYWALL_LOCKED_ERROR = "PAYWALL_LOCKED";
 const INPUT_MONITORING_REQUIRED_ERROR = "INPUT_MONITORING_REQUIRED";
 const PAYWALL_API_BASE_URL = (
@@ -108,37 +110,6 @@ const PAYWALL_API_BASE_URL = (
   (import.meta.env.DEV ? "http://localhost:3010" : "")
 ).replace(/\/$/, "");
 const APP_VERSION = (import.meta.env.VITE_APP_VERSION as string | undefined)?.trim() ?? "0.1.0";
-const COLOR_THEME_OPTIONS: Array<{
-  id: ColorTheme;
-  label: string;
-  description: string;
-  swatches: [string, string, string];
-}> = [
-  {
-    id: "evergreen",
-    label: "Evergreen",
-    description: "Fresh greens and cool blues for focus.",
-    swatches: ["#149954", "#5674e2", "#e24a4a"],
-  },
-  {
-    id: "sunrise",
-    label: "Sunrise",
-    description: "Warm coral and amber with soft mint.",
-    swatches: ["#f08b42", "#f7bc52", "#d75456"],
-  },
-  {
-    id: "ocean",
-    label: "Ocean",
-    description: "Deep teal tones with calm sky accents.",
-    swatches: ["#127a95", "#2d94b5", "#de6b51"],
-  },
-  {
-    id: "dark",
-    label: "Dark",
-    description: "Pure black with high-contrast accents.",
-    swatches: ["#000000", "#1a1a1a", "#2cae82"],
-  },
-];
 const LOCKED_PAYWALL_PREVIEW_BARS: LockedPreviewBar[] = Array.from(
   { length: 60 },
   (_, index) => {
@@ -170,20 +141,25 @@ const formatIsoDate = (isoDate?: string | null) => {
   });
 };
 
-const buildTooltipPosition = (clientX: number, clientY: number) => {
+const buildTooltipPosition = (
+  clientX: number,
+  clientY: number,
+  tooltipWidth = 300,
+  tooltipHeight = 72,
+) => {
   const margin = 12;
-  const estimatedWidth = 320;
-  const estimatedHeight = 48;
+  const estimatedWidth = tooltipWidth;
+  const estimatedHeight = tooltipHeight;
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
 
   const left = Math.max(
     margin,
-    Math.min(clientX + 14, viewportWidth - estimatedWidth - margin),
+    Math.min(clientX - estimatedWidth * 0.5, viewportWidth - estimatedWidth - margin),
   );
   const top = Math.max(
     margin,
-    Math.min(clientY - 40, viewportHeight - estimatedHeight - margin),
+    Math.min(clientY - estimatedHeight - 18, viewportHeight - estimatedHeight - margin),
   );
 
   return { left, top };
@@ -256,6 +232,12 @@ const formatRange = (bucket: number) => {
   return `${minuteToLocalLabel(start)}-${minuteToLocalLabel(end)}`;
 };
 
+const previewAppNameForMinute = (minute: number, daySeed: number) => {
+  const apps = ["Figma", "Slack", "VS Code", "Chrome", "Notion"];
+  const appIndex = Math.abs(Math.floor((minute / 37 + daySeed) % apps.length));
+  return apps[appIndex];
+};
+
 const shareTargetLabel = (target: ShareTarget) => (target === "x" ? "X" : "Reddit");
 
 const XIcon = () => (
@@ -298,10 +280,6 @@ type CheckoutStatusResponse =
   | { status: "pending" }
   | { status: "expired" }
   | { status: "paid"; entitlement: EntitlementCertificate };
-
-type EntitlementRefreshResponse =
-  | { status: "active"; entitlement: EntitlementCertificate; nextSyncAtEpochMs: number }
-  | { status: "revoked"; reason: string };
 
 const paywallApiUrl = (path: string) => {
   if (!PAYWALL_API_BASE_URL) {
@@ -378,7 +356,17 @@ const fetchPaywallJson = async <TResponse,>(
     },
   });
   const rawText = await response.text();
-  const payload = rawText ? (JSON.parse(rawText) as unknown) : {};
+  let payload: unknown = {};
+
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as unknown;
+    } catch {
+      if (response.ok) {
+        throw new Error("Received an invalid response from the paywall server.");
+      }
+    }
+  }
 
   if (!response.ok) {
     const message =
@@ -389,6 +377,150 @@ const fetchPaywallJson = async <TResponse,>(
   }
 
   return payload as TResponse;
+};
+
+const hasTauriRuntime = () =>
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+const localIsoDate = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const previewSleepWindow: SleepWindow = {
+  enabled: true,
+  startMinute: DEFAULT_SLEEP_START_MINUTE,
+  endMinute: DEFAULT_SLEEP_END_MINUTE,
+};
+
+const buildPreviewDay = (dateKey = localIsoDate()): TodayTimeline => {
+  const now = new Date();
+  const todayKey = localIsoDate(now);
+  const isToday = dateKey === todayKey;
+  const lastObservedMinute = isToday
+    ? now.getHours() * 60 + now.getMinutes()
+    : MINUTES_PER_DAY - 1;
+  const parsedDate = parseLocalDate(dateKey);
+  const daySeed = parsedDate.getDate() + parsedDate.getMonth() * 7;
+  const timeline = new Array<number>(MINUTES_PER_DAY).fill(0);
+  const appTimeline = new Array<string | null>(MINUTES_PER_DAY).fill(null);
+  let monitoredMinutes = 0;
+  let activeMinutes = 0;
+
+  for (let minute = 0; minute <= lastObservedMinute; minute += 1) {
+    if (isMinuteInSleepWindow(minute, previewSleepWindow)) {
+      continue;
+    }
+
+    monitoredMinutes += 1;
+    const workdayMinute = minute >= 8 * 60 && minute <= 18 * 60 + 30;
+    const focusWave = Math.sin((minute + daySeed * 17) * 0.037);
+    const meetingWave = Math.cos((minute + daySeed * 9) * 0.011);
+    const isActive = workdayMinute && focusWave + meetingWave > -0.35;
+
+    appTimeline[minute] = previewAppNameForMinute(minute, daySeed);
+
+    if (isActive) {
+      timeline[minute] = 1;
+      activeMinutes += 1;
+    }
+  }
+
+  const currentMinute = Math.min(lastObservedMinute, MINUTES_PER_DAY - 1);
+
+  return {
+    date: dateKey,
+    timeline,
+    appTimeline,
+    activeMinutes,
+    idleMinutes: Math.max(0, monitoredMinutes - activeMinutes),
+    currentlyActive: isToday && timeline[currentMinute] === 1,
+    sleepMode: isToday && isMinuteInSleepWindow(currentMinute, previewSleepWindow),
+    sleepWindow: previewSleepWindow,
+    listenerError: null,
+  };
+};
+
+const buildPreviewHeatmap = (days: number): HeatmapDay[] => {
+  const today = new Date();
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (days - index - 1));
+    const day = buildPreviewDay(localIsoDate(date));
+    return {
+      date: day.date,
+      activeMinutes: day.activeMinutes,
+    };
+  });
+};
+
+const previewInvoke = async <TResponse,>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<TResponse> => {
+  const today = buildPreviewDay();
+
+  switch (command) {
+    case "get_app_runtime_profile":
+      return { startedHidden: false } as TResponse;
+    case "get_tracking_permission_status":
+    case "request_tracking_permission_access":
+      return {
+        supported: true,
+        inputMonitoringGranted: true,
+        allGranted: true,
+      } as TResponse;
+    case "get_paywall_status":
+      return {
+        status: "unlocked",
+        deviceId: "browser-preview",
+        entitlement: null,
+        lastSyncAtEpochMs: Date.now(),
+        nextSyncAtEpochMs: null,
+        pendingSessionId: null,
+        reason: null,
+      } as TResponse;
+    case "get_today_timeline":
+      return today as TResponse;
+    case "get_day_timeline":
+      return buildPreviewDay(String(args?.date ?? today.date)) as TResponse;
+    case "get_heatmap": {
+      const days = Number(args?.days ?? HEATMAP_DAYS);
+      return buildPreviewHeatmap(Number.isFinite(days) ? days : HEATMAP_DAYS) as TResponse;
+    }
+    case "get_storage_status":
+      return {
+        storePath: "browser-preview",
+        persistedDayCount: HEATMAP_DAYS,
+        storeFileExists: false,
+        storeFileSizeBytes: 0,
+        lastPersistedAtEpochMs: Date.now(),
+      } as TResponse;
+    case "set_sleep_window":
+      return {
+        enabled: Boolean(args?.enabled),
+        startMinute: Number(args?.startMinute ?? DEFAULT_SLEEP_START_MINUTE),
+        endMinute: Number(args?.endMinute ?? DEFAULT_SLEEP_END_MINUTE),
+      } as TResponse;
+    case "set_pending_checkout_session":
+    case "apply_entitlement":
+      return undefined as TResponse;
+    default:
+      throw new Error(`No browser preview handler for ${command}.`);
+  }
+};
+
+const invokeApp = async <TResponse,>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<TResponse> => {
+  if (hasTauriRuntime()) {
+    return invoke<TResponse>(command, args);
+  }
+
+  return previewInvoke<TResponse>(command, args);
 };
 
 const App = () => {
@@ -404,7 +536,6 @@ const App = () => {
   const [unlocking, setUnlocking] = useState(false);
   const [pollingSessionId, setPollingSessionId] = useState<string | null>(null);
   const [pollingMessage, setPollingMessage] = useState<string | null>(null);
-  const [syncingEntitlement, setSyncingEntitlement] = useState(false);
   const [today, setToday] = useState<TodayTimeline | null>(null);
   const [heatmap, setHeatmap] = useState<HeatmapDay[]>([]);
   const [storage, setStorage] = useState<StorageStatus | null>(null);
@@ -422,23 +553,37 @@ const App = () => {
   const [sleepDirty, setSleepDirty] = useState(false);
   const [sleepSaveError, setSleepSaveError] = useState<string | null>(null);
   const [savingSleep, setSavingSleep] = useState(false);
-  const [hoverTooltip, setHoverTooltip] = useState<HoverTooltip | null>(null);
   const [launchAtLoginEnabled, setLaunchAtLoginEnabled] = useState<boolean | null>(null);
   const [launchAtLoginLoading, setLaunchAtLoginLoading] = useState(true);
   const [launchAtLoginSaving, setLaunchAtLoginSaving] = useState(false);
   const [launchAtLoginError, setLaunchAtLoginError] = useState<string | null>(null);
-  const [colorTheme, setColorTheme] = useState<ColorTheme>("evergreen");
   const [sharingTarget, setSharingTarget] = useState<ShareTarget | null>(null);
   const [shareMessage, setShareMessage] = useState<string | null>(null);
   const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== "hidden");
+  const [windowFocused, setWindowFocused] = useState(() => document.hasFocus());
+  const [runtimeProfile, setRuntimeProfile] = useState<AppRuntimeProfile | null>(null);
   const shareCaptureRef = useRef<HTMLElement | null>(null);
+  const hoverTooltipRef = useRef<HoverTooltipHandle | null>(null);
+  const hoveredTooltipTargetRef = useRef<HTMLElement | null>(null);
+  const hoveredTooltipTextRef = useRef<string | null>(null);
   const autoPermissionRequestAttemptedRef = useRef(false);
+  const dashboardSupplementalRefreshAtRef = useRef(0);
+  const appBootstrappedRef = useRef(false);
+  const mountedRef = useRef(true);
+  const paywallBootstrapPromiseRef = useRef<Promise<void> | null>(null);
 
-  const refreshPaywallStatus = async () => invoke<PaywallStatus>("get_paywall_status");
+  const refreshPaywallStatus = async () => invokeApp<PaywallStatus>("get_paywall_status");
   const refreshTrackingPermissionStatus = async () =>
-    invoke<TrackingPermissionStatus>("get_tracking_permission_status");
+    invokeApp<TrackingPermissionStatus>("get_tracking_permission_status");
   const requestTrackingPermissionAccess = async () =>
-    invoke<TrackingPermissionStatus>("request_tracking_permission_access");
+    invokeApp<TrackingPermissionStatus>("request_tracking_permission_access");
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const syncPageVisibility = () => {
@@ -451,13 +596,100 @@ const App = () => {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    let unlistenFocusChange: (() => void) | null = null;
+
+    if (!hasTauriRuntime()) {
+      const syncBrowserFocus = () => {
+        if (!active) return;
+        setWindowFocused(document.hasFocus());
+      };
+
+      window.addEventListener("focus", syncBrowserFocus);
+      window.addEventListener("blur", syncBrowserFocus);
+      syncBrowserFocus();
+
+      return () => {
+        active = false;
+        window.removeEventListener("focus", syncBrowserFocus);
+        window.removeEventListener("blur", syncBrowserFocus);
+      };
+    }
+
+    const currentWindow = getCurrentWindow();
+
+    const syncWindowFocus = async () => {
+      try {
+        const focused = await currentWindow.isFocused();
+        if (!active) return;
+        setWindowFocused(focused);
+      } catch (windowFocusError) {
+        console.warn("Trackr window focus fallback", windowFocusError);
+        if (!active) return;
+        setWindowFocused(document.hasFocus());
+      }
+    };
+
+    void syncWindowFocus();
+    void currentWindow
+      .onFocusChanged(({ payload }) => {
+        if (!active) return;
+        setWindowFocused(payload);
+      })
+      .then((unlisten) => {
+        if (!active) {
+          unlisten();
+          return;
+        }
+        unlistenFocusChange = unlisten;
+      })
+      .catch((windowFocusListenError) => {
+        console.warn("Trackr focus listener fallback", windowFocusListenError);
+      });
+
+    return () => {
+      active = false;
+      unlistenFocusChange?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadRuntimeProfile = async () => {
+      try {
+        const profile = await invokeApp<AppRuntimeProfile>("get_app_runtime_profile");
+        if (!active) return;
+        setRuntimeProfile(profile);
+      } catch (runtimeProfileError) {
+        console.warn("Trackr runtime profile fallback", runtimeProfileError);
+        if (!active) return;
+        setRuntimeProfile({ startedHidden: false });
+      }
+    };
+
+    void loadRuntimeProfile();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const appForeground = pageVisible && windowFocused;
+  const shouldDeferForegroundBoot = runtimeProfile?.startedHidden === true && !appForeground;
+
   const refreshLaunchAtLogin = useEffectEvent(async () => {
     try {
-      setLaunchAtLoginEnabled(await isAutostartEnabled());
+      const enabled = hasTauriRuntime() ? await isAutostartEnabled() : false;
+      if (!mountedRef.current) return;
+      setLaunchAtLoginEnabled(enabled);
       setLaunchAtLoginError(null);
     } catch (launchAtLoginStatusError) {
+      if (!mountedRef.current) return;
       setLaunchAtLoginError(friendlyLaunchAtLoginErrorMessage(launchAtLoginStatusError));
     } finally {
+      if (!mountedRef.current) return;
       setLaunchAtLoginLoading(false);
     }
   });
@@ -477,32 +709,45 @@ const App = () => {
     setTrackingPermissionError(errorMessage ?? null);
   };
 
-  const bootstrapPaywallStatus = async () => {
-    try {
-      let status = await refreshPaywallStatus();
-
-      setPaywallStatus(status);
-      setPollingSessionId(status.pendingSessionId);
-      if (status.pendingSessionId) {
-        setPollingMessage("Finish payment in your browser to continue.");
-      } else {
-        setPollingMessage(null);
-      }
-
-      if (status.status === "unlocked") {
-        status = await syncEntitlementIfDue(status);
-        setPaywallStatus(status);
-      }
-
-      setPaywallError(null);
-      setAppMode(status.status === "unlocked" ? "unlocked" : "locked");
-    } catch (paywallInitError) {
-      setPaywallError(
-        friendlyUserErrorMessage(paywallInitError, "Trackr couldn't verify access right now."),
-      );
-      setAppMode("locked");
-    }
+  const syncPendingCheckoutState = (status: PaywallStatus) => {
+    setPollingSessionId(status.pendingSessionId);
+    setPollingMessage(
+      status.pendingSessionId ? "Finish payment in your browser to continue." : null,
+    );
   };
+
+  const bootstrapPaywallStatus = useEffectEvent(async () => {
+    if (paywallBootstrapPromiseRef.current) {
+      return paywallBootstrapPromiseRef.current;
+    }
+
+    let task: Promise<void> | null = null;
+    task = (async () => {
+      try {
+        let status = await refreshPaywallStatus();
+        if (!mountedRef.current) return;
+
+        setPaywallError(null);
+        setPaywallStatus(status);
+        syncPendingCheckoutState(status);
+
+        setAppMode(status.status === "unlocked" ? "unlocked" : "locked");
+      } catch (paywallInitError) {
+        if (!mountedRef.current) return;
+        setPaywallError(
+          friendlyUserErrorMessage(paywallInitError, "Trackr couldn't verify access right now."),
+        );
+        setAppMode("locked");
+      }
+    })().finally(() => {
+      if (paywallBootstrapPromiseRef.current === task) {
+        paywallBootstrapPromiseRef.current = null;
+      }
+    });
+
+    paywallBootstrapPromiseRef.current = task;
+    return task;
+  });
 
   const refreshTrackingAccess = useEffectEvent(async (prompt: boolean) => {
     if (prompt) {
@@ -513,6 +758,8 @@ const App = () => {
       const status = prompt
         ? await requestTrackingPermissionAccess()
         : await refreshTrackingPermissionStatus();
+      if (!mountedRef.current) return false;
+
       setTrackingPermissionStatus(status);
 
       if (!status.allGranted) {
@@ -526,6 +773,7 @@ const App = () => {
       await bootstrapPaywallStatus();
       return true;
     } catch (trackingAccessError) {
+      if (!mountedRef.current) return false;
       setTrackingPermissionError(
         friendlyUserErrorMessage(
           trackingAccessError,
@@ -535,7 +783,7 @@ const App = () => {
       setAppMode("permissions");
       return false;
     } finally {
-      if (prompt) {
+      if (prompt && mountedRef.current) {
         setRequestingTrackingPermission(false);
       }
     }
@@ -549,11 +797,19 @@ const App = () => {
 
     try {
       const status = await refreshTrackingPermissionStatus();
+      if (!mountedRef.current) return true;
       enterPermissionMode(status);
     } catch (trackingAccessError) {
+      if (!mountedRef.current) return true;
+      const fallbackStatus = trackingPermissionStatus ?? {
+        supported: false,
+        inputMonitoringGranted: false,
+        allGranted: false,
+      };
       enterPermissionMode(
         {
-          supported: true,
+          ...fallbackStatus,
+          supported: fallbackStatus.supported,
           inputMonitoringGranted: false,
           allGranted: false,
         },
@@ -567,45 +823,10 @@ const App = () => {
     return true;
   };
 
-  const syncEntitlementIfDue = async (currentStatus: PaywallStatus) => {
-    if (currentStatus.status !== "unlocked" || !currentStatus.entitlement) return currentStatus;
-    if (!PAYWALL_API_BASE_URL || !navigator.onLine) return currentStatus;
-    if (
-      currentStatus.nextSyncAtEpochMs !== null &&
-      currentStatus.nextSyncAtEpochMs > Date.now()
-    ) {
-      return currentStatus;
-    }
-
-    setSyncingEntitlement(true);
-    try {
-      const response = await fetchPaywallJson<EntitlementRefreshResponse>("/api/entitlement/refresh", {
-        method: "POST",
-        body: JSON.stringify({
-          deviceId: currentStatus.deviceId,
-          entitlement: currentStatus.entitlement,
-        }),
-      });
-
-      if (response.status === "revoked") {
-        await invoke("clear_entitlement");
-        setPaywallError(`Your access is no longer available: ${response.reason}`);
-        return refreshPaywallStatus();
-      }
-
-      await invoke<PaywallStatus>("apply_entitlement", { entitlement: response.entitlement });
-      return refreshPaywallStatus();
-    } catch (syncError) {
-      setPaywallError(
-        friendlyUserErrorMessage(syncError, "Couldn't refresh your access right now."),
-      );
-      return currentStatus;
-    } finally {
-      setSyncingEntitlement(false);
-    }
-  };
-
   useEffect(() => {
+    if (!runtimeProfile || appBootstrappedRef.current || shouldDeferForegroundBoot) return;
+    appBootstrappedRef.current = true;
+
     let active = true;
 
     const bootstrapApp = async () => {
@@ -624,7 +845,9 @@ const App = () => {
             permissionStatus = await requestTrackingPermissionAccess();
             if (!active) return;
           } finally {
-            setRequestingTrackingPermission(false);
+            if (active && mountedRef.current) {
+              setRequestingTrackingPermission(false);
+            }
           }
         }
 
@@ -652,18 +875,27 @@ const App = () => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [runtimeProfile, shouldDeferForegroundBoot, bootstrapPaywallStatus]);
 
   useEffect(() => {
+    if (!runtimeProfile || shouldDeferForegroundBoot) return;
     void refreshLaunchAtLogin();
-  }, [refreshLaunchAtLogin]);
+  }, [runtimeProfile, shouldDeferForegroundBoot, refreshLaunchAtLogin]);
 
   useEffect(() => {
-    if (appMode !== "permissions" || !pageVisible) return;
+    if (appMode !== "unlocked") {
+      dashboardSupplementalRefreshAtRef.current = 0;
+    }
+  }, [appMode]);
+
+  useEffect(() => {
+    if (appMode !== "permissions" || !appForeground) return;
+    if (trackingPermissionStatus?.supported === false) return;
 
     let active = true;
     let timer: number | null = null;
     let polling = false;
+    let shouldReschedule = true;
     const refresh = async () => {
       if (!active || polling) return;
       polling = true;
@@ -672,9 +904,15 @@ const App = () => {
         if (!active) return;
 
         setTrackingPermissionStatus(status);
+        if (!status.supported) {
+          shouldReschedule = false;
+          enterPermissionMode(status);
+          return;
+        }
         if (status.allGranted) {
           setTrackingPermissionError(null);
           setAppMode("loading");
+          shouldReschedule = false;
           await bootstrapPaywallStatus();
         }
       } catch (trackingAccessError) {
@@ -687,7 +925,7 @@ const App = () => {
         );
       } finally {
         polling = false;
-        if (active) {
+        if (active && shouldReschedule) {
           timer = window.setTimeout(() => {
             void refresh();
           }, 3_000);
@@ -703,10 +941,10 @@ const App = () => {
         window.clearTimeout(timer);
       }
     };
-  }, [appMode, pageVisible]);
+  }, [appMode, appForeground, trackingPermissionStatus?.supported]);
 
   useEffect(() => {
-    if (appMode !== "unlocked" || !pageVisible) return;
+    if (appMode !== "unlocked" || !appForeground) return;
     let active = true;
     let timer: number | null = null;
     let polling = false;
@@ -715,25 +953,14 @@ const App = () => {
       if (!active || polling) return;
       polling = true;
       try {
-        const permissionStatus = await refreshTrackingPermissionStatus();
-        if (!active) return;
-        setTrackingPermissionStatus(permissionStatus);
-        if (!permissionStatus.allGranted) {
-          enterPermissionMode(permissionStatus);
-          return;
-        }
+        const shouldRefreshSupplemental =
+          dashboardSupplementalRefreshAtRef.current === 0 ||
+          Date.now() >= dashboardSupplementalRefreshAtRef.current;
 
-        const [todayData, heatmapData, storageData] = await Promise.all([
-          invoke<TodayTimeline>("get_today_timeline"),
-          invoke<HeatmapDay[]>("get_heatmap", { days: HEATMAP_DAYS }),
-          invoke<StorageStatus>("get_storage_status"),
-        ]);
-
+        const todayData = await invokeApp<TodayTimeline>("get_today_timeline");
         if (!active) return;
 
         setToday(todayData);
-        setHeatmap(heatmapData);
-        setStorage(storageData);
         setError(friendlyListenerErrorMessage(todayData.listenerError));
         setSelectedDate((current) => current ?? todayData.date);
         setSelectedDay((current) => {
@@ -741,6 +968,19 @@ const App = () => {
           if (current.date === todayData.date) return todayData;
           return current;
         });
+
+        if (shouldRefreshSupplemental) {
+          const [heatmapData, storageData] = await Promise.all([
+            invokeApp<HeatmapDay[]>("get_heatmap", { days: HEATMAP_DAYS }),
+            invokeApp<StorageStatus>("get_storage_status"),
+          ]);
+          if (!active) return;
+
+          setHeatmap(heatmapData);
+          setStorage(storageData);
+          dashboardSupplementalRefreshAtRef.current = Date.now() + DASHBOARD_SUPPLEMENTAL_REFRESH_MS;
+        }
+
         setLastUpdated(new Date());
       } catch (fetchError) {
         if (!active) return;
@@ -762,7 +1002,7 @@ const App = () => {
         if (active) {
           timer = window.setTimeout(() => {
             void refresh();
-          }, 15_000);
+          }, DASHBOARD_PRIMARY_REFRESH_MS);
         }
       }
     };
@@ -775,7 +1015,7 @@ const App = () => {
         window.clearTimeout(timer);
       }
     };
-  }, [appMode, pageVisible]);
+  }, [appMode, appForeground]);
 
   useEffect(() => {
     if (!today) return;
@@ -805,13 +1045,6 @@ const App = () => {
     });
   }, [today, sleepDirty, savingSleep]);
 
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", colorTheme);
-    return () => {
-      document.documentElement.removeAttribute("data-theme");
-    };
-  }, [colorTheme]);
-
   const effectiveSleepWindow = useMemo<SleepWindow>(() => {
     const startMinute = clockToMinute(sleepDraft.startTime);
     const endMinute = clockToMinute(sleepDraft.endTime);
@@ -835,15 +1068,13 @@ const App = () => {
 
   const timelineBuckets = useMemo(() => {
     const raw = displayedDay?.timeline ?? [];
-    const padded = [...raw];
-    if (padded.length < MINUTES_PER_DAY) {
-      padded.push(...Array.from({ length: MINUTES_PER_DAY - padded.length }, () => 0));
-    }
+    const appTimeline = displayedDay?.appTimeline ?? [];
 
     return Array.from({ length: MINUTES_PER_DAY / TIMELINE_BUCKET_MINUTES }, (_, index) => {
       const bucketStartMinute = index * TIMELINE_BUCKET_MINUTES;
       let activeMinutes = 0;
       let sleepMinutes = 0;
+      const appMinuteCounts = new Map<string, number>();
 
       for (let minute = bucketStartMinute; minute < bucketStartMinute + TIMELINE_BUCKET_MINUTES; minute += 1) {
         if (isMinuteInSleepWindow(minute, effectiveSleepWindow)) {
@@ -851,11 +1082,20 @@ const App = () => {
           continue;
         }
 
-        if ((padded[minute] ?? 0) > 0) {
+        if ((raw[minute] ?? 0) > 0) {
           activeMinutes += 1;
+        }
+
+        const appName = appTimeline[minute]?.trim();
+        if (appName) {
+          appMinuteCounts.set(appName, (appMinuteCounts.get(appName) ?? 0) + 1);
         }
       }
 
+      const topApp = Array.from(appMinuteCounts.entries()).sort(
+        ([appA, minutesA], [appB, minutesB]) =>
+          minutesB - minutesA || appA.localeCompare(appB),
+      )[0];
       const monitoredMinutes = TIMELINE_BUCKET_MINUTES - sleepMinutes;
       return {
         index,
@@ -863,9 +1103,11 @@ const App = () => {
         active: activeMinutes > 0,
         activeMinutes,
         monitoredMinutes,
+        topAppName: topApp?.[0] ?? null,
+        topAppMinutes: topApp?.[1] ?? 0,
       };
     }).filter((bucket) => bucket.monitoredMinutes > 0);
-  }, [displayedDay?.timeline, effectiveSleepWindow]);
+  }, [displayedDay?.timeline, displayedDay?.appTimeline, effectiveSleepWindow]);
 
   const timelineStyle = useMemo(
     () =>
@@ -930,24 +1172,6 @@ const App = () => {
   }, [heatmap]);
 
   const nowBucket = viewingToday ? bucketIndexForNow() : Number.POSITIVE_INFINITY;
-  const statusClass = !displayedDay
-    ? "idle"
-    : viewingToday
-      ? displayedDay.sleepMode
-        ? "sleep"
-        : displayedDay.currentlyActive
-          ? "active"
-          : "idle"
-      : "history";
-  const statusLabel = !displayedDay
-    ? "No data"
-    : viewingToday
-      ? displayedDay.sleepMode
-        ? "Sleep mode"
-        : displayedDay.currentlyActive
-          ? "Active now"
-          : "Idle now"
-      : `Viewing ${formatIsoDate(displayedDay.date)}`;
 
   const updateSleepDraft = (changes: Partial<SleepSettingsDraft>) => {
     setSleepDraft((current) => ({ ...current, ...changes }));
@@ -966,17 +1190,21 @@ const App = () => {
 
     setSelectingDay(true);
     try {
-      const dayData = await invoke<TodayTimeline>("get_day_timeline", { date });
+      const dayData = await invokeApp<TodayTimeline>("get_day_timeline", { date });
+      if (!mountedRef.current) return;
       setSelectedDay(dayData);
     } catch (selectionError) {
       if (await handleTrackingAccessRequired(selectionError)) {
         return;
       }
+      if (!mountedRef.current) return;
       setDaySelectionError(
         friendlyUserErrorMessage(selectionError, `Couldn't load ${formatIsoDate(date)}.`),
       );
     } finally {
-      setSelectingDay(false);
+      if (mountedRef.current) {
+        setSelectingDay(false);
+      }
     }
   };
 
@@ -992,11 +1220,12 @@ const App = () => {
     setSavingSleep(true);
     setSleepSaveError(null);
     try {
-      const saved = await invoke<SleepWindow>("set_sleep_window", {
+      const saved = await invokeApp<SleepWindow>("set_sleep_window", {
         enabled: sleepDraft.enabled,
         startMinute,
         endMinute,
       });
+      if (!mountedRef.current) return;
       setSleepDraft({
         enabled: saved.enabled,
         startTime: minuteToClock(saved.startMinute),
@@ -1004,44 +1233,61 @@ const App = () => {
       });
       setSleepDirty(false);
 
-      const [todayData, storageData] = await Promise.all([
-        invoke<TodayTimeline>("get_today_timeline"),
-        invoke<StorageStatus>("get_storage_status"),
+      const [todayData, heatmapData, storageData] = await Promise.all([
+        invokeApp<TodayTimeline>("get_today_timeline"),
+        invokeApp<HeatmapDay[]>("get_heatmap", { days: HEATMAP_DAYS }),
+        invokeApp<StorageStatus>("get_storage_status"),
       ]);
+      if (!mountedRef.current) return;
       setToday(todayData);
+      setHeatmap(heatmapData);
       setStorage(storageData);
       setError(friendlyListenerErrorMessage(todayData.listenerError));
       setLastUpdated(new Date());
+      dashboardSupplementalRefreshAtRef.current = Date.now() + DASHBOARD_SUPPLEMENTAL_REFRESH_MS;
     } catch (saveError) {
       if (await handleTrackingAccessRequired(saveError)) {
         return;
       }
+      if (!mountedRef.current) return;
       setSleepSaveError(
         friendlyUserErrorMessage(saveError, "Couldn't save your sleep window."),
       );
     } finally {
-      setSavingSleep(false);
+      if (mountedRef.current) {
+        setSavingSleep(false);
+      }
     }
   };
 
-  const showHoverTooltip = (
-    event: ReactMouseEvent<HTMLDivElement>,
-    text: string,
-  ) => {
-    const position = buildTooltipPosition(event.clientX, event.clientY);
-    setHoverTooltip({ text, ...position });
-  };
-
-  const moveHoverTooltip = (event: ReactMouseEvent<HTMLDivElement>) => {
-    setHoverTooltip((current) => {
-      if (!current) return null;
-      const position = buildTooltipPosition(event.clientX, event.clientY);
-      return { ...current, ...position };
-    });
-  };
-
   const hideHoverTooltip = () => {
-    setHoverTooltip(null);
+    hoveredTooltipTargetRef.current = null;
+    hoveredTooltipTextRef.current = null;
+    hoverTooltipRef.current?.hide();
+  };
+
+  const handleDelegatedMouseMove = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const target = (event.target as HTMLElement).closest<HTMLElement>(
+      "[data-tooltip]",
+    );
+    if (target) {
+      const text = target.dataset.tooltip!;
+      const appName = target.dataset.appName;
+      const appMinutes = Number(target.dataset.appMinutes ?? 0);
+      const tooltipKey = `${text}|${appName ?? ""}|${appMinutes || ""}`;
+      if (hoveredTooltipTargetRef.current !== target || hoveredTooltipTextRef.current !== tooltipKey) {
+        hoveredTooltipTargetRef.current = target;
+        hoveredTooltipTextRef.current = tooltipKey;
+        hoverTooltipRef.current?.show(text, event.clientX, event.clientY, {
+          appName,
+          appMinutes: Number.isFinite(appMinutes) ? appMinutes : 0,
+        });
+        return;
+      }
+      hoverTooltipRef.current?.move(event.clientX, event.clientY);
+    } else {
+      hideHoverTooltip();
+    }
   };
 
   const setLaunchAtLogin = useEffectEvent(async (nextEnabled: boolean) => {
@@ -1052,17 +1298,24 @@ const App = () => {
     setLaunchAtLoginEnabled(nextEnabled);
 
     try {
-      if (nextEnabled) {
-        await enableAutostart();
-      } else {
-        await disableAutostart();
+      if (hasTauriRuntime()) {
+        if (nextEnabled) {
+          await enableAutostart();
+        } else {
+          await disableAutostart();
+        }
       }
-      setLaunchAtLoginEnabled(await isAutostartEnabled());
+      const enabled = hasTauriRuntime() ? await isAutostartEnabled() : nextEnabled;
+      if (!mountedRef.current) return;
+      setLaunchAtLoginEnabled(enabled);
     } catch (launchAtLoginUpdateError) {
+      if (!mountedRef.current) return;
       setLaunchAtLoginEnabled(previousValue);
       setLaunchAtLoginError(friendlyLaunchAtLoginErrorMessage(launchAtLoginUpdateError));
     } finally {
-      setLaunchAtLoginSaving(false);
+      if (mountedRef.current) {
+        setLaunchAtLoginSaving(false);
+      }
     }
   });
 
@@ -1097,6 +1350,7 @@ const App = () => {
       throw new Error("Share capture area is not ready.");
     }
 
+    const { default: html2canvas } = await import("html2canvas");
     const canvas = await html2canvas(captureRoot, {
       scale: Math.min(window.devicePixelRatio || 1, 2),
       useCORS: true,
@@ -1132,6 +1386,7 @@ const App = () => {
     try {
       const imageBlob = await captureShareSnapshot();
       const copied = await copyImageToClipboard(imageBlob);
+      if (!mountedRef.current) return;
       if (!copied) {
         const fallbackDate = displayedDay?.date ?? "day";
         downloadBlob(imageBlob, `trackr-${fallbackDate}.png`);
@@ -1155,12 +1410,16 @@ const App = () => {
       const action = copied
         ? "Screenshot copied to clipboard. Paste it with Cmd/Ctrl+V."
         : "Screenshot downloaded to your device.";
+      if (!mountedRef.current) return;
       setShareMessage(`${action} ${shareTargetLabel(target)} opened in your browser.`);
     } catch (shareError) {
+      if (!mountedRef.current) return;
       console.error("Trackr share error", shareError);
       setShareMessage(`Share failed: ${String(shareError)}`);
     } finally {
-      setSharingTarget(null);
+      if (mountedRef.current) {
+        setSharingTarget(null);
+      }
     }
   };
 
@@ -1179,7 +1438,9 @@ const App = () => {
           appVersion: APP_VERSION,
         }),
       });
-      await invoke("set_pending_checkout_session", { sessionId: response.sessionId });
+      if (!mountedRef.current) return;
+      await invokeApp("set_pending_checkout_session", { sessionId: response.sessionId });
+      if (!mountedRef.current) return;
       setPollingSessionId(response.sessionId);
       setPaywallStatus((current) =>
         current ? { ...current, pendingSessionId: response.sessionId } : current,
@@ -1187,31 +1448,50 @@ const App = () => {
       setPollingMessage("Checkout opened in your browser. Finish payment, then return to Trackr.");
       await openUrl(response.checkoutUrl);
     } catch (checkoutError) {
+      if (!mountedRef.current) return;
       setPaywallError(
         friendlyUserErrorMessage(checkoutError, "Couldn't start checkout right now."),
       );
     } finally {
-      setUnlocking(false);
+      if (mountedRef.current) {
+        setUnlocking(false);
+      }
     }
   };
 
-  const attemptEntitlementRefresh = useEffectEvent(async () => {
-    if (!paywallStatus || paywallStatus.status !== "unlocked") return;
-    const nextStatus = await syncEntitlementIfDue(paywallStatus);
-    setPaywallStatus(nextStatus);
-    if (nextStatus.status === "locked") {
-      setAppMode("locked");
-    }
-  });
 
   useEffect(() => {
     if (!pollingSessionId || appMode === "unlocked" || !paywallStatus?.deviceId) return;
+    if (!appForeground) return;
 
     let active = true;
     let timer: number | null = null;
     let polling = false;
+    let shouldReschedule = true;
+    const startedAt = Date.now();
+    let retryCount = 0;
+
+    const stopPolling = (message: string) => {
+      setPollingMessage(message);
+      setPollingSessionId(null);
+      shouldReschedule = false;
+    };
+
+    const scheduleNextPoll = (delayMs: number) => {
+      if (!active) return;
+      timer = window.setTimeout(() => {
+        void poll();
+      }, delayMs);
+    };
+
     const poll = async () => {
       if (!active || polling) return;
+      if (!appForeground) return;
+      if (Date.now() - startedAt > CHECKOUT_POLL_MAX_ELAPSED_MS) {
+        stopPolling("Checkout is taking longer than expected. Click Check payment status to try again.");
+        return;
+      }
+
       polling = true;
       try {
         const result = await fetchPaywallJson<CheckoutStatusResponse>(
@@ -1223,23 +1503,27 @@ const App = () => {
         if (!active) return;
         if (result.status === "pending") {
           setPollingMessage("Confirming your payment...");
+          retryCount += 1;
           return;
         }
         if (result.status === "expired") {
           setPollingMessage("Your checkout session expired. Start checkout again.");
+          shouldReschedule = false;
           setPollingSessionId(null);
-          await invoke("set_pending_checkout_session", { sessionId: null });
+          await invokeApp("set_pending_checkout_session", { sessionId: null });
+          if (!active) return;
           setPaywallStatus((current) =>
             current ? { ...current, pendingSessionId: null } : current,
           );
           return;
         }
 
-        await invoke<PaywallStatus>("apply_entitlement", { entitlement: result.entitlement });
-        await invoke("set_pending_checkout_session", { sessionId: null });
+        await invokeApp<PaywallStatus>("apply_entitlement", { entitlement: result.entitlement });
+        await invokeApp("set_pending_checkout_session", { sessionId: null });
         const unlockedStatus = await refreshPaywallStatus();
         if (!active) return;
 
+        shouldReschedule = false;
         setPaywallStatus(unlockedStatus);
         setPollingSessionId(null);
         setPollingMessage("Payment confirmed. Trackr is unlocked.");
@@ -1255,6 +1539,7 @@ const App = () => {
             ),
           );
           setPollingMessage("Payment was received, but Trackr could not apply your license.");
+          shouldReschedule = false;
           setPollingSessionId(null);
           return;
         }
@@ -1263,6 +1548,7 @@ const App = () => {
         if (/Failed to fetch|NetworkError|network request/i.test(message)) {
           setPaywallError(null);
           setPollingMessage("Confirming your payment...");
+          retryCount += 1;
           return;
         }
 
@@ -1270,13 +1556,16 @@ const App = () => {
           friendlyUserErrorMessage(pollError, "Trackr couldn't finish unlocking automatically."),
         );
         setPollingMessage("Trackr couldn't finish unlocking automatically.");
+        shouldReschedule = false;
         setPollingSessionId(null);
       } finally {
         polling = false;
-        if (active) {
-          timer = window.setTimeout(() => {
-            void poll();
-          }, 4_000);
+        if (active && shouldReschedule) {
+          const delayMs = Math.min(
+            CHECKOUT_POLL_INITIAL_DELAY_MS + retryCount * 2_000,
+            CHECKOUT_POLL_MAX_DELAY_MS,
+          );
+          scheduleNextPoll(delayMs);
         }
       }
     };
@@ -1289,17 +1578,7 @@ const App = () => {
         window.clearTimeout(timer);
       }
     };
-  }, [pollingSessionId, appMode, paywallStatus?.deviceId]);
-
-  useEffect(() => {
-    if (appMode !== "unlocked") return;
-    const timer = window.setInterval(() => {
-      void attemptEntitlementRefresh();
-    }, PAYWALL_SYNC_INTERVAL_MS);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [appMode]);
+  }, [pollingSessionId, appMode, paywallStatus?.deviceId, appForeground]);
 
   if (appMode === "loading") {
     return (
@@ -1329,10 +1608,6 @@ const App = () => {
         <section className="paywall-card paywall-enter">
           <div className="paywall-grid">
             <div className="paywall-main">
-              <div className="paywall-tag-row">
-                <p className="paywall-kicker">Trackr</p>
-                <span className="paywall-chip">Permission required</span>
-              </div>
           <h1 className="paywall-title">
             {backgroundTrackingSupported
               ? "Allow background input tracking"
@@ -1431,10 +1706,6 @@ const App = () => {
         <section className="paywall-card paywall-enter">
           <div className="paywall-grid">
             <div className="paywall-main">
-              <div className="paywall-tag-row">
-                <p className="paywall-kicker">Trackr</p>
-                <span className="paywall-chip">One-time unlock</span>
-              </div>
               <h1 className="paywall-title">Own your focus dashboard</h1>
               <div className="paywall-preview-strip" aria-hidden="true">
                 {LOCKED_PAYWALL_PREVIEW_BARS.map((bar, index) => (
@@ -1446,7 +1717,7 @@ const App = () => {
                 ))}
               </div>
               <p className="paywall-subtle">
-                A one-time payment unlocks full tracking, history, and settings on this device.
+                Unlock full tracking, history, and settings on this device for a one-time $4.99 payment.
               </p>
               <ul className="paywall-benefits">
                 <li>Live activity timeline and yearly history</li>
@@ -1460,7 +1731,7 @@ const App = () => {
                   onClick={() => void launchCheckout()}
                   disabled={unlocking}
                 >
-                  {unlocking ? "Opening checkout..." : "Unlock now"}
+                  {unlocking ? "Opening checkout..." : "Unlock now \u2014 $4.99"}
                 </button>
                 {paywallStatus?.pendingSessionId ? (
                   <button
@@ -1473,10 +1744,9 @@ const App = () => {
                 ) : null}
               </div>
               {pollingMessage ? <p className="paywall-meta">{pollingMessage}</p> : null}
-              {syncingEntitlement ? <p className="paywall-meta">Refreshing access...</p> : null}
             </div>
             <aside className="paywall-side">
-              <p className="paywall-side-label">Lifetime access</p>
+              <p className="paywall-side-label">Lifetime access — $4.99</p>
               <h2>Private. Fast. Yours.</h2>
               <p>
                 Unlock once and keep using Trackr on this device, including when you're offline.
@@ -1492,17 +1762,10 @@ const App = () => {
 
   return (
     <main className="app-shell">
-      <UpdateChecker />
+      <UpdateChecker enabled={hasTauriRuntime() && !shouldDeferForegroundBoot && appForeground} />
       <header className="top-header">
-        <div>
-          <p className="eyebrow">Trackr</p>
-          <h1>Activity dashboard</h1>
-          <p className="subtle">
-            See your active and idle time throughout the day. Trackr updates automatically while
-            it is running and background tracking stays available.
-          </p>
-        </div>
-        <div className={`status-pill ${statusClass}`}>{statusLabel}</div>
+        <p className="eyebrow">Trackr</p>
+        <h1>Activity</h1>
       </header>
 
       <section className="metrics-row">
@@ -1519,7 +1782,7 @@ const App = () => {
           <strong>{storage?.persistedDayCount ?? 0}</strong>
         </article>
         <article className="metric-card">
-          <span>Updated</span>
+          <span>Last updated</span>
           <strong>
             {lastUpdated
               ? lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -1530,14 +1793,7 @@ const App = () => {
 
       <section className="panel share-capture" ref={shareCaptureRef}>
         <div className="panel-heading panel-heading-share">
-          <div>
-            <h2>{selectedDateLabel} Timeline</h2>
-            <p>
-              Green shows active time in each 5-minute block. Red shows idle time. Sleep hours are
-              excluded.
-              {viewingToday ? " Gray shows future time." : ""}
-            </p>
-          </div>
+          <h2>{selectedDateLabel} Timeline</h2>
           <div className="share-actions" data-html2canvas-ignore="true">
             <button
               className="share-icon-button"
@@ -1561,7 +1817,12 @@ const App = () => {
             </button>
           </div>
         </div>
-        <div className="timeline" style={timelineStyle}>
+        <div
+          className="timeline"
+          style={timelineStyle}
+          onMouseMove={handleDelegatedMouseMove}
+          onMouseLeave={hideHoverTooltip}
+        >
           {timelineBuckets.map((bucket) => {
             const isFuture = bucket.index > nowBucket;
             const className = isFuture
@@ -1571,15 +1832,15 @@ const App = () => {
                 : "timeline-cell idle";
             const tooltip =
               bucket.monitoredMinutes === TIMELINE_BUCKET_MINUTES
-                ? `${formatRange(bucket.index)} • ${bucket.activeMinutes}/${TIMELINE_BUCKET_MINUTES} active minutes`
-                : `${formatRange(bucket.index)} • ${bucket.activeMinutes}/${bucket.monitoredMinutes} active monitored minutes`;
+                ? `${formatRange(bucket.index)}\n${bucket.activeMinutes}/${TIMELINE_BUCKET_MINUTES} active minutes`
+                : `${formatRange(bucket.index)}\n${bucket.activeMinutes}/${bucket.monitoredMinutes} active monitored minutes`;
             return (
               <div
                 key={bucket.index}
                 className={className}
-                onMouseEnter={(event) => showHoverTooltip(event, tooltip)}
-                onMouseMove={moveHoverTooltip}
-                onMouseLeave={hideHoverTooltip}
+                data-tooltip={tooltip}
+                data-app-name={bucket.topAppName ?? undefined}
+                data-app-minutes={bucket.topAppMinutes || undefined}
               />
             );
           })}
@@ -1589,19 +1850,16 @@ const App = () => {
             <span key={`${minute}-${index}`}>{minuteToLocalLabel(minute)}</span>
           ))}
         </div>
-        <p className="share-caption" data-html2canvas-ignore="true">
-          {shareMessage ??
-            "Creates a screenshot of this panel, opens your selected site, and lets you paste the image."}
-        </p>
+        {shareMessage ? (
+          <p className="share-caption" data-html2canvas-ignore="true">
+            {shareMessage}
+          </p>
+        ) : null}
       </section>
 
       <section className="panel">
         <div className="panel-heading">
           <h2>Work History</h2>
-          <p>
-            Select a day to view its active and idle totals. Showing data through{" "}
-            {formatIsoDate(today?.date)}.
-          </p>
         </div>
         <div className="heatmap">
           <div className="month-row">
@@ -1609,7 +1867,17 @@ const App = () => {
               <span key={`${label}-${index}`}>{label}</span>
             ))}
           </div>
-          <div className="heatmap-grid">
+          <div
+            className="heatmap-grid"
+            onMouseMove={handleDelegatedMouseMove}
+            onMouseLeave={hideHoverTooltip}
+            onClick={(event) => {
+              const target = (event.target as HTMLElement).closest<HTMLElement>("[data-date]");
+              if (target?.dataset.date) {
+                void selectDay(target.dataset.date);
+              }
+            }}
+          >
             {heatmapWeeks.weeks.map((week, weekIndex) => (
               <div className="heatmap-week" key={weekIndex}>
                 {week.map((cell, dayIndex) => {
@@ -1620,10 +1888,8 @@ const App = () => {
                     <div
                       key={dayIndex}
                       className={`heatmap-cell level-${cell.level} ${isSelected ? "selected" : ""}`}
-                      onMouseEnter={(event) => showHoverTooltip(event, tooltip)}
-                      onMouseMove={moveHoverTooltip}
-                      onMouseLeave={hideHoverTooltip}
-                      onClick={() => void selectDay(cell.date)}
+                      data-tooltip={tooltip}
+                      data-date={cell.date}
                       role="button"
                       tabIndex={0}
                       aria-label={`Load ${cell.date}`}
@@ -1735,44 +2001,11 @@ const App = () => {
         </div>
 
         <div className="settings-grid">
-          <div className="settings-card">
-            <h3>Appearance</h3>
-            <p className="settings-subtle">Choose a color scheme for the dashboard.</p>
-            <div className="theme-options" role="radiogroup" aria-label="Color scheme">
-              {COLOR_THEME_OPTIONS.map((theme) => {
-                const selected = colorTheme === theme.id;
-                return (
-                  <button
-                    key={theme.id}
-                    type="button"
-                    className={`theme-option ${selected ? "selected" : ""}`}
-                    onClick={() => setColorTheme(theme.id)}
-                    aria-pressed={selected}
-                  >
-                    <span className="theme-swatches" aria-hidden="true">
-                      {theme.swatches.map((swatch) => (
-                        <span
-                          key={`${theme.id}-${swatch}`}
-                          className="theme-swatch"
-                          style={{ background: swatch }}
-                        />
-                      ))}
-                    </span>
-                    <span className="theme-copy">
-                      <strong>{theme.label}</strong>
-                      <small>{theme.description}</small>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           <div className="settings-card tracking-info">
             <h3>How Trackr measures activity</h3>
             <p>
-              Trackr checks for keyboard and mouse activity every minute. Minutes with enough
-              activity are marked active. Minutes without enough activity are marked idle.
+              Trackr samples recent keyboard and mouse activity every 15 seconds and rolls that
+              into per-minute active or idle states.
             </p>
             <p>
               Trackr records nothing until background tracking is ready, and it only keeps tracking
@@ -1790,17 +2023,7 @@ const App = () => {
         {sleepSaveError ? <p className="error inline-error">{sleepSaveError}</p> : null}
       </section>
 
-      {hoverTooltip
-        ? createPortal(
-            <div
-              className="hover-tooltip"
-              style={{ left: hoverTooltip.left, top: hoverTooltip.top }}
-            >
-              {hoverTooltip.text}
-            </div>,
-            document.body,
-          )
-        : null}
+      <HoverTooltip ref={hoverTooltipRef} buildPosition={buildTooltipPosition} />
 
       {error ? <p className="error">{error}</p> : null}
     </main>

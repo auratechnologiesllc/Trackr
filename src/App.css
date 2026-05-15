@@ -15,11 +15,11 @@
   --action: #172540;
   --action-dark: #0f1a31;
   --future: #e8edf7;
-  --heat-0: #e9eff8;
-  --heat-1: #d5ebff;
-  --heat-2: #b5e9d6;
-  --heat-3: #78d6b3;
-  --heat-4: #2fa27b;
+  --heat-0: #f3f3f3;
+  --heat-1: #f7b1b6;
+  --heat-2: #ef5f67;
+  --heat-3: #84e2ad;
+  --heat-4: #26c76f;
   --font-body: "SF Pro Text", "Avenir Next", "Segoe UI", sans-serif;
   --font-display: "SF Pro Display", "Avenir Next", "Segoe UI", sans-serif;
   --font-mono: "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
@@ -38,10 +38,10 @@
   --action: #e9792e;
   --action-dark: #cc6520;
   --heat-0: #f8eee4;
-  --heat-1: #fde0bf;
-  --heat-2: #f7bc7c;
-  --heat-3: #ee9141;
-  --heat-4: #bc5f1f;
+  --heat-1: #f7b1b6;
+  --heat-2: #ef5f67;
+  --heat-3: #84e2ad;
+  --heat-4: #26c76f;
 }
 
 [data-theme="ocean"] {
@@ -57,10 +57,10 @@
   --action: #1a88a6;
   --action-dark: #136f89;
   --heat-0: #e7f0f3;
-  --heat-1: #bfe1ea;
-  --heat-2: #83c2d5;
-  --heat-3: #3f9fb9;
-  --heat-4: #1e6f85;
+  --heat-1: #f7b1b6;
+  --heat-2: #ef5f67;
+  --heat-3: #84e2ad;
+  --heat-4: #26c76f;
 }
 
 [data-theme="dark"] {
@@ -81,10 +81,10 @@
   --action-dark: #22966f;
   --future: #1a1a1a;
   --heat-0: #1a2535;
-  --heat-1: #214257;
-  --heat-2: #2e7286;
-  --heat-3: #39a391;
-  --heat-4: #67d7aa;
+  --heat-1: #7b3238;
+  --heat-2: #ff7373;
+  --heat-3: #246f50;
+  --heat-4: #4fd1a8;
 }
 
 * {
@@ -838,16 +838,220 @@ h1 {
 .hover-tooltip {
   position: fixed;
   z-index: 2000;
-  max-width: min(320px, calc(100vw - 24px));
-  padding: 8px 10px;
-  border-radius: 14px;
-  background: rgba(17, 28, 53, 0.94);
-  color: #f3f7ff;
+  max-width: min(300px, calc(100vw - 24px));
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px 10px 14px 10px;
+  background:
+    linear-gradient(145deg, rgba(32, 43, 71, 0.97), rgba(12, 19, 37, 0.97)),
+    #111c35;
+  color: #f7f9ff;
   font-size: 0.76rem;
   line-height: 1.35;
-  box-shadow: 0 16px 32px rgba(10, 18, 38, 0.28);
+  box-shadow:
+    0 18px 36px rgba(10, 18, 38, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
   pointer-events: none;
+  transform: perspective(520px) translateY(-4px) rotateX(0deg) rotate(-2.5deg) scale(1);
+  transform-origin: 50% calc(100% + 12px);
+  white-space: normal;
+}
+
+.hover-tooltip::before {
+  content: "";
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.26);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.28);
+}
+
+.hover-tooltip::after {
+  content: "";
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  background: #0c1325;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.hover-tooltip.is-visible {
+  animation: hover-tag-pop 220ms cubic-bezier(0.18, 0.9, 0.25, 1.24) both;
+}
+
+.hover-tooltip-content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.hover-tooltip-line:first-child {
+  padding-right: 16px;
+  font-weight: 750;
+}
+
+.hover-tooltip-line + .hover-tooltip-line {
+  color: rgba(247, 249, 255, 0.76);
+}
+
+.hover-tooltip-app {
+  display: inline-flex;
+  align-items: center;
+  align-self: start;
+  gap: 7px;
+  margin-top: 7px;
+  padding: 5px 8px 5px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.11);
+}
+
+.hover-app-icon {
+  position: relative;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #8ea0ff, #57d3a4);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.24);
+}
+
+.hover-app-icon.chrome {
+  border-radius: 999px;
+  background: conic-gradient(#ea4335 0 33%, #fbbc05 0 66%, #34a853 0 100%);
+}
+
+.hover-app-icon.chrome::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: #4285f4;
+}
+
+.hover-app-icon.safari {
+  border-radius: 999px;
+  background: radial-gradient(circle, #ecf8ff 0 20%, #0a84ff 22% 100%);
+}
+
+.hover-app-icon.safari::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 8px;
+  width: 2px;
+  height: 12px;
+  border-radius: 999px;
+  background: #ff4b55;
+  transform: rotate(38deg);
+}
+
+.hover-app-icon.slack {
+  background:
+    linear-gradient(90deg, transparent 38%, #36c5f0 38% 62%, transparent 62%),
+    linear-gradient(0deg, transparent 38%, #2eb67d 38% 62%, transparent 62%),
+    #611f69;
+}
+
+.hover-app-icon.figma {
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 35% 25%, #ff7262 0 22%, transparent 23%),
+    radial-gradient(circle at 65% 25%, #a259ff 0 22%, transparent 23%),
+    radial-gradient(circle at 35% 50%, #1abcfe 0 22%, transparent 23%),
+    radial-gradient(circle at 65% 50%, #0acf83 0 22%, transparent 23%),
+    radial-gradient(circle at 35% 75%, #f24e1e 0 22%, transparent 23%),
+    #15151f;
+}
+
+.hover-app-icon.notion {
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.hover-app-icon.notion::after {
+  content: "N";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #050505;
+  font-family: Georgia, serif;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hover-app-icon.code {
+  background: linear-gradient(135deg, #087ad1, #1f9cf0);
+}
+
+.hover-app-icon.code::after {
+  content: "<>";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.hover-app-icon.terminal {
+  background: #111111;
+}
+
+.hover-app-icon.terminal::after {
+  content: ">";
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  color: #6dff9f;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hover-app-label {
+  max-width: 150px;
+  overflow: hidden;
+  color: #ffffff;
+  font-weight: 720;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.hover-app-minutes {
+  color: rgba(247, 249, 255, 0.62);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+@keyframes hover-tag-pop {
+  0% {
+    opacity: 0;
+    transform: perspective(520px) translateY(14px) rotateX(62deg) rotate(-8deg) scale(0.86);
+  }
+  64% {
+    opacity: 1;
+    transform: perspective(520px) translateY(-6px) rotateX(-8deg) rotate(-1.5deg) scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(520px) translateY(-4px) rotateX(0deg) rotate(-2.5deg) scale(1);
+  }
 }
 
 .paywall-shell {
@@ -902,7 +1106,7 @@ h1 {
 }
 
 .paywall-card {
-  width: min(1000px, 96vw);
+  width: min(1080px, 96vw);
   padding: 34px;
   border-radius: 34px;
   border: 1px solid rgba(220, 229, 243, 0.9);
@@ -983,9 +1187,9 @@ h1 {
   grid-template-columns: repeat(60, minmax(0, 1fr));
   gap: 4px;
   align-items: end;
-  height: 110px;
-  padding: 18px 20px 20px;
-  border-radius: 30px;
+  height: 140px;
+  padding: 22px 26px 24px;
+  border-radius: 18px;
   border: 1px solid rgba(211, 223, 241, 0.92);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 250, 255, 0.94)),
@@ -993,6 +1197,8 @@ h1 {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.95),
     0 18px 42px rgba(80, 104, 145, 0.08);
+  width: 100%;
+  max-width: 640px;
 }
 
 .paywall-preview-bar {
@@ -1491,4 +1697,544 @@ h1 {
   background: var(--green-dark);
   border-radius: 3px;
   transition: width 0.3s ease;
+}
+
+/* Minimal white dashboard */
+:root {
+  --bg-top: #ffffff;
+  --bg-bottom: #ffffff;
+  --glow-left: transparent;
+  --glow-right: transparent;
+  --panel-bg: transparent;
+  --panel-border: #e7e7e7;
+  --text-primary: #050505;
+  --text-muted: #666666;
+  --green: #26c76f;
+  --green-dark: #159457;
+  --red: #ef5f67;
+  --sleep: #050505;
+  --sleep-soft: #f3f3f3;
+  --action: #050505;
+  --action-dark: #2a2a2a;
+  --future: #f2f2f2;
+  --heat-0: #f3f3f3;
+  --heat-1: #f7b1b6;
+  --heat-2: #ef5f67;
+  --heat-3: #84e2ad;
+  --heat-4: #26c76f;
+}
+
+body {
+  background: #ffffff;
+  color: #050505;
+}
+
+main.app-shell:not(.paywall-shell) {
+  width: min(1160px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 34px 0 52px;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.app-shell:not(.paywall-shell) .top-header {
+  display: grid;
+  gap: 5px;
+  align-items: start;
+  margin-bottom: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell:not(.paywall-shell) .eyebrow {
+  margin: 0;
+  color: #5f5f5f;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.app-shell:not(.paywall-shell) h1 {
+  margin: 0;
+  color: #050505;
+  font-family: var(--font-display);
+  font-size: 44px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.app-shell:not(.paywall-shell) .metrics-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 28px;
+  margin-bottom: 44px;
+}
+
+.app-shell:not(.paywall-shell) .metric-card {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: metric-enter 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.app-shell:not(.paywall-shell) .metric-card:nth-child(2) {
+  animation-delay: 65ms;
+}
+
+.app-shell:not(.paywall-shell) .metric-card:nth-child(3) {
+  animation-delay: 130ms;
+}
+
+.app-shell:not(.paywall-shell) .metric-card:nth-child(4) {
+  animation-delay: 195ms;
+}
+
+.app-shell:not(.paywall-shell) .metric-card span,
+.app-shell:not(.paywall-shell) .selection-meta,
+.app-shell:not(.paywall-shell) .timeline-axis,
+.app-shell:not(.paywall-shell) .month-row,
+.app-shell:not(.paywall-shell) .sleep-field,
+.app-shell:not(.paywall-shell) .panel-heading h2 {
+  letter-spacing: 0;
+}
+
+.app-shell:not(.paywall-shell) .metric-card span {
+  margin: 0 0 8px;
+  color: #656565;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: none;
+}
+
+.app-shell:not(.paywall-shell) .metric-card strong {
+  display: block;
+  color: #050505;
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.app-shell:not(.paywall-shell) .panel {
+  margin: 0 0 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell:not(.paywall-shell) .panel + .panel {
+  padding-top: 32px;
+  border-top: 1px solid #ececec;
+}
+
+.app-shell:not(.paywall-shell) .panel-heading {
+  margin-bottom: 16px;
+}
+
+.app-shell:not(.paywall-shell) .panel-heading h2 {
+  margin: 0;
+  color: #050505;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.app-shell:not(.paywall-shell) .panel-heading p,
+.app-shell:not(.paywall-shell) .settings-subtle,
+.app-shell:not(.paywall-shell) .sleep-caption,
+.app-shell:not(.paywall-shell) .update-caption,
+.app-shell:not(.paywall-shell) .share-caption {
+  color: #666666;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.app-shell:not(.paywall-shell) .panel-heading-share {
+  padding: 0 78px 0 0;
+}
+
+.app-shell:not(.paywall-shell) .share-actions {
+  top: -6px;
+  right: 0;
+  gap: 8px;
+}
+
+.app-shell:not(.paywall-shell) .share-icon-button {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #050505;
+  box-shadow: none;
+}
+
+.app-shell:not(.paywall-shell) .share-icon-button:hover:not(:disabled) {
+  background: #f2f2f2;
+  transform: none;
+}
+
+.app-shell:not(.paywall-shell) .timeline {
+  min-height: 58px;
+  padding: 0;
+  gap: 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.app-shell:not(.paywall-shell) .timeline-cell {
+  height: 58px;
+  border-radius: 0;
+  background: #f2f2f2;
+  transform-origin: bottom;
+  animation: timeline-enter 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.app-shell:not(.paywall-shell) .timeline-cell:hover {
+  transform: scaleY(1.08);
+}
+
+.app-shell:not(.paywall-shell) .timeline-cell.active {
+  background: #26c76f;
+}
+
+.app-shell:not(.paywall-shell) .timeline-cell.idle {
+  background: #ef5f67;
+}
+
+.app-shell:not(.paywall-shell) .timeline-cell.future {
+  background: #f2f2f2;
+}
+
+.app-shell:not(.paywall-shell) .timeline-axis {
+  margin-top: 12px;
+  color: #777777;
+  font-family: var(--font-body);
+  font-size: 12px;
+  text-transform: none;
+}
+
+.app-shell:not(.paywall-shell) .share-caption {
+  margin: 12px 0 0;
+}
+
+.app-shell:not(.paywall-shell) .heatmap {
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.app-shell:not(.paywall-shell) .month-row {
+  grid-auto-columns: 12px;
+  gap: 5px;
+  margin-bottom: 9px;
+  color: #777777;
+  font-family: var(--font-body);
+  font-size: 11px;
+  text-transform: none;
+}
+
+.app-shell:not(.paywall-shell) .heatmap-grid {
+  gap: 5px;
+}
+
+.app-shell:not(.paywall-shell) .heatmap-week {
+  grid-template-rows: repeat(7, 12px);
+  gap: 5px;
+}
+
+.app-shell:not(.paywall-shell) .heatmap-cell {
+  width: 12px;
+  height: 12px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.app-shell:not(.paywall-shell) .heatmap-cell:hover {
+  opacity: 0.72;
+  transform: none;
+}
+
+.app-shell:not(.paywall-shell) .heatmap-cell.selected,
+.app-shell:not(.paywall-shell) .heatmap-cell:focus-visible {
+  border-color: #050505;
+  box-shadow: none;
+  outline: none;
+}
+
+.app-shell:not(.paywall-shell) .selection-meta {
+  margin-top: 13px;
+  color: #666666;
+  font-family: var(--font-body);
+  font-size: 13px;
+  text-transform: none;
+}
+
+.app-shell:not(.paywall-shell) .sleep-shell {
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr);
+  gap: 34px;
+}
+
+.app-shell:not(.paywall-shell) .sleep-window-card,
+.app-shell:not(.paywall-shell) .update-card,
+.app-shell:not(.paywall-shell) .settings-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell:not(.paywall-shell) .sleep-window-header,
+.app-shell:not(.paywall-shell) .update-card {
+  gap: 10px;
+}
+
+.app-shell:not(.paywall-shell) .sleep-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 14px;
+}
+
+.app-shell:not(.paywall-shell) .sleep-toggle,
+.app-shell:not(.paywall-shell) .startup-toggle {
+  color: #050505;
+  font-size: 14px;
+}
+
+.app-shell:not(.paywall-shell) .sleep-field {
+  gap: 7px;
+  color: #666666;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: none;
+}
+
+.app-shell:not(.paywall-shell) .sleep-field input {
+  height: 42px;
+  border: 1px solid #cfcfcf;
+  border-radius: 0;
+  background: #ffffff;
+  color: #050505;
+}
+
+.app-shell:not(.paywall-shell) .save-button,
+.app-shell:not(.paywall-shell) .update-btn,
+.app-shell:not(.paywall-shell) .update-dismiss {
+  height: 42px;
+  border-radius: 0;
+  box-shadow: none;
+  font-size: 13px;
+}
+
+.app-shell:not(.paywall-shell) .save-button,
+.app-shell:not(.paywall-shell) .update-btn {
+  border: 1px solid #050505;
+  background: #050505;
+  color: #ffffff;
+}
+
+.app-shell:not(.paywall-shell) .save-button:hover:not(:disabled),
+.app-shell:not(.paywall-shell) .update-btn:hover {
+  background: #2a2a2a;
+  transform: none;
+  box-shadow: none;
+}
+
+.app-shell:not(.paywall-shell) .save-button.secondary,
+.app-shell:not(.paywall-shell) .update-dismiss {
+  border: 1px solid #bdbdbd;
+  background: #ffffff;
+  color: #050505;
+}
+
+.app-shell:not(.paywall-shell) .save-button.secondary:hover:not(:disabled),
+.app-shell:not(.paywall-shell) .update-dismiss:hover {
+  background: #f2f2f2;
+  color: #050505;
+}
+
+.app-shell:not(.paywall-shell) .settings-grid {
+  display: block;
+  margin-top: 30px;
+  padding-top: 28px;
+  border-top: 1px solid #ececec;
+}
+
+.app-shell:not(.paywall-shell) .settings-card h3,
+.app-shell:not(.paywall-shell) .update-card h3 {
+  margin: 0;
+  color: #050505;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.app-shell:not(.paywall-shell) .tracking-info {
+  border: 0;
+  background: transparent;
+}
+
+.app-shell:not(.paywall-shell) .tracking-info p + p {
+  margin-top: 6px;
+}
+
+.app-shell:not(.paywall-shell) .error {
+  border: 1px solid #050505;
+  border-radius: 0;
+  background: #ffffff;
+  color: #050505;
+}
+
+.app-shell:not(.paywall-shell) .hover-tooltip {
+  border-radius: 0;
+  background: #050505;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.app-shell:not(.paywall-shell) .update-banner {
+  padding: 0 0 16px;
+  border: 0;
+  border-bottom: 1px solid #ececec;
+  border-radius: 0;
+  background: transparent;
+  color: #050505;
+}
+
+.app-shell:not(.paywall-shell) .update-progress-bar {
+  border-radius: 0;
+  background: #e4e4e4;
+}
+
+.app-shell:not(.paywall-shell) .update-progress-fill {
+  border-radius: 0;
+  background: #050505;
+}
+
+@keyframes metric-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes timeline-enter {
+  from {
+    opacity: 0;
+    transform: scaleY(0.32);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+@media (max-width: 980px) {
+  main.app-shell:not(.paywall-shell) {
+    width: min(calc(100vw - 36px), 860px);
+  }
+
+  .app-shell:not(.paywall-shell) .metrics-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-shell:not(.paywall-shell) .sleep-shell,
+  .app-shell:not(.paywall-shell) .sleep-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell:not(.paywall-shell) .sleep-controls .save-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 700px) {
+  main.app-shell:not(.paywall-shell) {
+    width: min(calc(100vw - 28px), 700px);
+    padding: 24px 0 38px;
+  }
+
+  .app-shell:not(.paywall-shell) h1 {
+    font-size: 36px;
+  }
+
+  .app-shell:not(.paywall-shell) .metrics-row {
+    gap: 22px 18px;
+    margin-bottom: 38px;
+  }
+
+  .app-shell:not(.paywall-shell) .metric-card strong {
+    font-size: 32px;
+  }
+
+  .app-shell:not(.paywall-shell) .panel-heading-share {
+    padding: 0 78px 0 0;
+  }
+
+  .app-shell:not(.paywall-shell) .share-actions {
+    top: -6px;
+    left: auto;
+    right: 0;
+  }
+
+  .app-shell:not(.paywall-shell) .timeline,
+  .app-shell:not(.paywall-shell) .timeline-cell {
+    min-height: 44px;
+    height: 44px;
+  }
+
+  .app-shell:not(.paywall-shell) .timeline {
+    gap: 0;
+  }
+
+  .app-shell:not(.paywall-shell) .month-row {
+    display: none;
+  }
+
+  .app-shell:not(.paywall-shell) .heatmap-grid,
+  .app-shell:not(.paywall-shell) .heatmap-week {
+    gap: 1px;
+  }
+
+  .app-shell:not(.paywall-shell) .heatmap-week {
+    grid-template-rows: repeat(7, 5px);
+  }
+
+  .app-shell:not(.paywall-shell) .heatmap-cell {
+    width: 5px;
+    height: 5px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell:not(.paywall-shell) .metric-card,
+  .app-shell:not(.paywall-shell) .timeline-cell {
+    animation: none;
+  }
+
+  .app-shell:not(.paywall-shell) .timeline-cell,
+  .app-shell:not(.paywall-shell) .heatmap-cell {
+    transition: none;
+  }
 }

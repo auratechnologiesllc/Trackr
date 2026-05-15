@@ -155,7 +155,7 @@ npm run dev
 npm run tauri dev
 ```
 
-In development, the main window opens normally. In production builds, the app is tray-first and hides instead of quitting when the window is closed.
+In development, the main window opens normally. In production builds, the app still includes a tray menu, but closing the main window now exits the app so it does not keep background trackers running unexpectedly.
 
 ## Available scripts
 
@@ -199,10 +199,8 @@ the system APIs used for preflighting and requesting event-listening access.
 
 ## How activity is measured
 
-- Input is sampled continuously and aggregated by minute.
-- A minute becomes active when it crosses either threshold:
-  - at least `6` key presses, or
-  - at least `150` mouse movement or scroll units
+- Recent system input is sampled every `15` seconds and aggregated by minute.
+- A minute is marked active when Trackr sees recent keyboard or mouse activity within that minute.
 - The UI groups minutes into `5`-minute timeline buckets.
 - Sleep-window minutes are excluded from active and idle totals.
 - Up to `730` days of history are retained locally.

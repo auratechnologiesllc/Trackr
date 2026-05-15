@@ -1,6 +1,6 @@
 [package]
 name = "trackr"
-version = "0.1.0"
+version = "1.0.2"
 description = "Menu bar productivity tracker for mouse and keyboard activity"
 authors = ["you"]
 edition = "2021"
@@ -36,6 +36,3 @@ tauri-plugin-autostart = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
 core-graphics = "0.24"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-rdev = "0.5.3"
