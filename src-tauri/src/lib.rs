@@ -419,9 +419,23 @@ impl TrackerState {
             .saturating_sub(IDLE_THRESHOLD_SECS.saturating_add(1));
         let (activity_store, activity_store_needs_migration) = load_store(&store_path);
         let sleep_window = activity_store.sleep_window.clone();
-        let paywall_store = load_paywall_store(&paywall_path);
-        // Once paid, stay paid — skip re-validation on startup.
-        let has_valid_entitlement = paywall_store.entitlement.is_some();
+        let mut paywall_store = load_paywall_store(&paywall_path);
+        let has_valid_entitlement = match paywall_store.entitlement.as_ref() {
+            Some(entitlement) => {
+                match validate_entitlement(entitlement, &paywall_store.device_id) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        eprintln!("Ignoring cached Trackr entitlement: {error}");
+                        paywall_store.entitlement = None;
+                        paywall_store.last_sync_at_epoch_ms = None;
+                        paywall_store.next_sync_at_epoch_ms = None;
+                        paywall_store.pending_session_id = None;
+                        false
+                    }
+                }
+            }
+            None => false,
+        };
         let input_access_granted = input_monitoring_granted();
         Self {
             store: Mutex::new(activity_store),
@@ -2608,7 +2622,7 @@ mod tests {
     }
 
     #[test]
-    fn tracker_keeps_entitlement_on_startup_without_revalidation() {
+    fn tracker_drops_invalid_cached_entitlement_on_startup() {
         let (store_path, paywall_path) = temp_paths("trackr-invalid-entitlement-test");
         let stale_store = PaywallStore {
             device_id: "device-1".into(),
@@ -2632,10 +2646,10 @@ mod tests {
 
         let tracker = TrackerState::new(store_path.clone(), paywall_path.clone());
 
-        // Once paid, always paid — entitlement persists without re-validation.
         let status = tracker.paywall_status();
-        assert_eq!(status.status, "unlocked");
-        assert!(status.entitlement.is_some());
+        assert_eq!(status.status, "locked");
+        assert!(status.entitlement.is_none());
+        assert!(status.pending_session_id.is_none());
 
         if let Some(parent) = store_path.parent() {
             let _ = fs::remove_dir_all(parent);

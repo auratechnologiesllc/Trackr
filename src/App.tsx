@@ -88,13 +88,11 @@ type AppRuntimeProfile = {
 
 type HeatmapCell = HeatmapDay & { level: 0 | 1 | 2 | 3 | 4 };
 type ShareTarget = "x" | "reddit";
-type LockedPreviewBar = {
-  tone: "active" | "idle";
-  height: number;
-};
+type ThemeMode = "light" | "dark";
 
 const HEATMAP_DAYS = 365;
 const TIMELINE_BUCKET_MINUTES = 5;
+const DENSITY_BUCKET_MINUTES = 30;
 const MINUTES_PER_DAY = 1_440;
 const DEFAULT_SLEEP_START_MINUTE = 23 * 60;
 const DEFAULT_SLEEP_END_MINUTE = 7 * 60;
@@ -105,26 +103,72 @@ const CHECKOUT_POLL_MAX_DELAY_MS = 20_000;
 const CHECKOUT_POLL_MAX_ELAPSED_MS = 10 * 60 * 1000;
 const PAYWALL_LOCKED_ERROR = "PAYWALL_LOCKED";
 const INPUT_MONITORING_REQUIRED_ERROR = "INPUT_MONITORING_REQUIRED";
+const THEME_STORAGE_KEY = "trackr-theme-mode";
 const PAYWALL_API_BASE_URL = (
   (import.meta.env.VITE_PAYWALL_API_BASE_URL as string | undefined)?.trim() ||
   (import.meta.env.DEV ? "http://localhost:3010" : "")
 ).replace(/\/$/, "");
 const APP_VERSION = (import.meta.env.VITE_APP_VERSION as string | undefined)?.trim() ?? "0.1.0";
-const LOCKED_PAYWALL_PREVIEW_BARS: LockedPreviewBar[] = Array.from(
-  { length: 60 },
-  (_, index) => {
-    const progress = index / 59;
-    const baseHeight = 18 + progress * 60;
-    const variation = Math.sin(index * 0.78) * 7 + Math.cos(index * 0.31) * 4;
-    const height = Math.max(16, Math.min(88, baseHeight + variation));
-    const value = (index * 17 + 9) % 23;
-
-    return {
-      tone: value < 7 ? "idle" : "active",
-      height,
-    };
-  },
+const PrivateTimelineIcon = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M7 11V8a5 5 0 0 1 10 0v3" />
+    <path d="M6 11h12v9H6z" />
+    <path d="M12 15v2" />
+  </svg>
 );
+
+const MenuBarIcon = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M4 5h16v11H4z" />
+    <path d="M8 20h8" />
+    <path d="M10 16v4" />
+    <path d="M14 16v4" />
+    <path d="M7 8h.01" />
+    <path d="M10 8h.01" />
+    <path d="M13 8h.01" />
+  </svg>
+);
+
+const FiveMinuteIcon = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M9 2h6" />
+    <path d="M12 8v5l3 2" />
+    <path d="M12 22a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" />
+  </svg>
+);
+
+const LocalArchiveIcon = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M5 7h14l1 4H4z" />
+    <path d="M5 11h14v8H5z" />
+    <path d="M9 15h6" />
+  </svg>
+);
+
+const FocusScoreIcon = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M4 14a8 8 0 0 1 16 0" />
+    <path d="M7 18h10" />
+    <path d="m12 14 4-4" />
+    <path d="M12 14h.01" />
+  </svg>
+);
+
+const QuietDesignIcon = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M12 3 5 6v5c0 4.5 2.8 7.6 7 10 4.2-2.4 7-5.5 7-10V6z" />
+    <path d="m9 12 2 2 4-4" />
+  </svg>
+);
+
+const PAYWALL_CAPABILITIES = [
+  { label: "Private timeline", Icon: PrivateTimelineIcon },
+  { label: "Menu bar native", Icon: MenuBarIcon },
+  { label: "Five minute slices", Icon: FiveMinuteIcon },
+  { label: "Local archive", Icon: LocalArchiveIcon },
+  { label: "Focus score", Icon: FocusScoreIcon },
+  { label: "Quiet by design", Icon: QuietDesignIcon },
+] as const;
 const toHours = (minutes: number) => (minutes / 60).toFixed(1);
 
 const parseLocalDate = (isoDate: string) => {
@@ -139,6 +183,21 @@ const formatIsoDate = (isoDate?: string | null) => {
     month: "short",
     day: "numeric",
   });
+};
+
+const formatHeaderDateTime = (isoDate?: string | null, updatedAt?: Date | null) => {
+  const date = isoDate ? parseLocalDate(isoDate) : new Date();
+  const dateLabel = date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+  const timeLabel = (updatedAt ?? new Date()).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  return `${dateLabel} / ${timeLabel}`;
 };
 
 const buildTooltipPosition = (
@@ -232,6 +291,9 @@ const formatRange = (bucket: number) => {
   return `${minuteToLocalLabel(start)}-${minuteToLocalLabel(end)}`;
 };
 
+const formatMinuteRange = (startMinute: number, durationMinutes: number) =>
+  `${minuteToLocalLabel(startMinute)}-${minuteToLocalLabel(startMinute + durationMinutes)}`;
+
 const previewAppNameForMinute = (minute: number, daySeed: number) => {
   const apps = ["Figma", "Slack", "VS Code", "Chrome", "Notion"];
   const appIndex = Math.abs(Math.floor((minute / 37 + daySeed) % apps.length));
@@ -239,6 +301,15 @@ const previewAppNameForMinute = (minute: number, daySeed: number) => {
 };
 
 const shareTargetLabel = (target: ShareTarget) => (target === "x" ? "X" : "Reddit");
+
+const initialThemeMode = (): ThemeMode => {
+  if (typeof window === "undefined") return "light";
+  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (storedTheme === "light" || storedTheme === "dark") {
+    return storedTheme;
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+};
 
 const XIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -559,6 +630,7 @@ const App = () => {
   const [launchAtLoginError, setLaunchAtLoginError] = useState<string | null>(null);
   const [sharingTarget, setSharingTarget] = useState<ShareTarget | null>(null);
   const [shareMessage, setShareMessage] = useState<string | null>(null);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
   const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== "hidden");
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus());
   const [runtimeProfile, setRuntimeProfile] = useState<AppRuntimeProfile | null>(null);
@@ -584,6 +656,11 @@ const App = () => {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
 
   useEffect(() => {
     const syncPageVisibility = () => {
@@ -1033,6 +1110,7 @@ const App = () => {
   const displayedDay = selectedDay ?? today;
   const viewingToday = displayedDay?.date === today?.date;
   const selectedDateLabel = viewingToday ? "Today" : formatIsoDate(displayedDay?.date);
+  const headerDateTimeLabel = formatHeaderDateTime(displayedDay?.date, lastUpdated);
   const backgroundTrackingSupported = trackingPermissionStatus?.supported ?? true;
   const inputMonitoringGranted = trackingPermissionStatus?.inputMonitoringGranted ?? false;
 
@@ -1134,6 +1212,47 @@ const App = () => {
     });
   }, [timelineBuckets]);
 
+  const densityBuckets = useMemo(() => {
+    const raw = displayedDay?.timeline ?? [];
+
+    return Array.from({ length: MINUTES_PER_DAY / DENSITY_BUCKET_MINUTES }, (_, index) => {
+      const bucketStartMinute = index * DENSITY_BUCKET_MINUTES;
+      let activeMinutes = 0;
+      let monitoredMinutes = 0;
+
+      for (
+        let minute = bucketStartMinute;
+        minute < bucketStartMinute + DENSITY_BUCKET_MINUTES;
+        minute += 1
+      ) {
+        if (isMinuteInSleepWindow(minute, effectiveSleepWindow)) {
+          continue;
+        }
+
+        monitoredMinutes += 1;
+        if ((raw[minute] ?? 0) > 0) {
+          activeMinutes += 1;
+        }
+      }
+
+      return {
+        index,
+        bucketStartMinute,
+        activeMinutes,
+        monitoredMinutes,
+        density: monitoredMinutes > 0 ? activeMinutes / monitoredMinutes : 0,
+      };
+    }).filter((bucket) => bucket.monitoredMinutes > 0);
+  }, [displayedDay?.timeline, effectiveSleepWindow]);
+
+  const densityStyle = useMemo(
+    () =>
+      ({
+        gridTemplateColumns: `repeat(${Math.max(densityBuckets.length, 1)}, minmax(0, 1fr))`,
+      }) as CSSProperties,
+    [densityBuckets.length],
+  );
+
   const heatmapWeeks = useMemo(() => {
     const cells: HeatmapCell[] = heatmap.map((day) => ({
       ...day,
@@ -1172,6 +1291,15 @@ const App = () => {
   }, [heatmap]);
 
   const nowBucket = viewingToday ? bucketIndexForNow() : Number.POSITIVE_INFINITY;
+  const nowMinuteOfDay = viewingToday
+    ? new Date().getHours() * 60 + new Date().getMinutes()
+    : Number.POSITIVE_INFINITY;
+  const displayedMonitoredMinutes =
+    (displayedDay?.activeMinutes ?? 0) + (displayedDay?.idleMinutes ?? 0);
+  const displayedDensityPercent =
+    displayedMonitoredMinutes > 0
+      ? Math.round(((displayedDay?.activeMinutes ?? 0) / displayedMonitoredMinutes) * 100)
+      : 0;
 
   const updateSleepDraft = (changes: Partial<SleepSettingsDraft>) => {
     setSleepDraft((current) => ({ ...current, ...changes }));
@@ -1582,7 +1710,7 @@ const App = () => {
 
   if (appMode === "loading") {
     return (
-      <main className="app-shell paywall-shell">
+      <main className="app-shell paywall-shell" data-theme="dark">
         <div className="paywall-ambient" aria-hidden="true">
           <span className="paywall-orb orb-a" />
           <span className="paywall-orb orb-b" />
@@ -1599,7 +1727,7 @@ const App = () => {
 
   if (appMode === "permissions") {
     return (
-      <main className="app-shell paywall-shell">
+      <main className="app-shell paywall-shell" data-theme="dark">
         <div className="paywall-ambient" aria-hidden="true">
           <span className="paywall-orb orb-a" />
           <span className="paywall-orb orb-b" />
@@ -1697,97 +1825,100 @@ const App = () => {
 
   if (appMode === "locked") {
     return (
-      <main className="app-shell paywall-shell">
-        <div className="paywall-ambient" aria-hidden="true">
-          <span className="paywall-orb orb-a" />
-          <span className="paywall-orb orb-b" />
-          <span className="paywall-orb orb-c" />
-        </div>
-        <section className="paywall-card paywall-enter">
-          <div className="paywall-grid">
-            <div className="paywall-main">
-              <h1 className="paywall-title">Own your focus dashboard</h1>
-              <div className="paywall-preview-strip" aria-hidden="true">
-                {LOCKED_PAYWALL_PREVIEW_BARS.map((bar, index) => (
-                  <span
-                    key={`${bar.tone}-${index}`}
-                    className={`paywall-preview-bar ${bar.tone}`}
-                    style={{ height: `${bar.height}%` }}
-                  />
-                ))}
-              </div>
-              <p className="paywall-subtle">
-                Unlock full tracking, history, and settings on this device for a one-time $4.99 payment.
-              </p>
-              <ul className="paywall-benefits">
-                <li>Live activity timeline and yearly history</li>
-                <li>One payment, no subscription</li>
-                <li>Use Trackr offline after setup</li>
-              </ul>
-              <div className="paywall-actions">
-                <button
-                  type="button"
-                  className="save-button paywall-cta"
-                  onClick={() => void launchCheckout()}
-                  disabled={unlocking}
-                >
-                  {unlocking ? "Opening checkout..." : "Unlock now \u2014 $4.99"}
-                </button>
-                {paywallStatus?.pendingSessionId ? (
-                  <button
-                    type="button"
-                    className="save-button secondary paywall-secondary"
-                    onClick={() => setPollingSessionId(paywallStatus.pendingSessionId)}
-                  >
-                    Check payment status
-                  </button>
-                ) : null}
-              </div>
-              {pollingMessage ? <p className="paywall-meta">{pollingMessage}</p> : null}
-            </div>
-            <aside className="paywall-side">
-              <p className="paywall-side-label">Lifetime access — $4.99</p>
-              <h2>Private. Fast. Yours.</h2>
-              <p>
-                Unlock once and keep using Trackr on this device, including when you're offline.
-              </p>
-              <p>Your activity data stays on this device, and the app stays simple to manage.</p>
-            </aside>
+      <main className="app-shell paywall-shell paywall-shell-hero" data-theme="dark">
+        <section className="paywall-hero paywall-enter">
+          <h1 className="paywall-title paywall-title-hero">Private Mac activity tracking.</h1>
+          <p className="paywall-subtle paywall-hero-copy">
+            Trackr turns on-device keyboard and pointer activity into a calm local timeline, so
+            focus, idle drift, and daily rhythm stay easy to read.
+          </p>
+          <div className="paywall-actions paywall-hero-actions">
+            <button
+              type="button"
+              className="paywall-hero-button paywall-hero-button-primary"
+              onClick={() => void launchCheckout()}
+              disabled={unlocking}
+            >
+              {unlocking ? "Opening checkout..." : "Unlock Now"}
+            </button>
+            {paywallStatus?.pendingSessionId ? (
+              <button
+                type="button"
+                className="paywall-hero-button paywall-hero-button-secondary"
+                onClick={() => setPollingSessionId(paywallStatus.pendingSessionId)}
+              >
+                Check Payment
+              </button>
+            ) : (
+              <span className="paywall-price-note">Lifetime access / $4.99</span>
+            )}
           </div>
-          {paywallError ? <p className="error inline-error">{paywallError}</p> : null}
+          {pollingMessage ? <p className="paywall-meta paywall-hero-meta">{pollingMessage}</p> : null}
+          {paywallError ? <p className="error inline-error paywall-hero-error">{paywallError}</p> : null}
+          <p className="paywall-hero-footnote">macOS 11+ / local history / private by default</p>
         </section>
+        <div className="paywall-feature-strip" aria-label="Trackr highlights">
+          <div className="paywall-feature-track">
+            {PAYWALL_CAPABILITIES.map(({ label, Icon }) => (
+              <span key={`primary-${label}`} className="paywall-feature-item">
+                <span className="paywall-feature-glyph" aria-hidden="true">
+                  <Icon />
+                </span>
+                {label}
+              </span>
+            ))}
+            {PAYWALL_CAPABILITIES.map(({ label, Icon }) => (
+              <span key={`mirror-${label}`} className="paywall-feature-item" aria-hidden="true">
+                <span className="paywall-feature-glyph">
+                  <Icon />
+                </span>
+                {label}
+              </span>
+            ))}
+          </div>
+        </div>
       </main>
     );
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-theme={themeMode}>
       <UpdateChecker enabled={hasTauriRuntime() && !shouldDeferForegroundBoot && appForeground} />
       <header className="top-header">
-        <p className="eyebrow">Trackr</p>
-        <h1>Activity</h1>
+        <div>
+          <h1>{selectedDateLabel}</h1>
+          <p className="header-subtitle">{headerDateTimeLabel}</p>
+        </div>
+        <div className="theme-segmented" aria-label="Color mode">
+          {(["light", "dark"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={themeMode === mode ? "selected" : ""}
+              onClick={() => setThemeMode(mode)}
+            >
+              {mode === "light" ? "Light" : "Dark"}
+            </button>
+          ))}
+        </div>
       </header>
 
       <section className="metrics-row">
         <article className="metric-card">
-          <span>{selectedDateLabel} active</span>
+          <span>Focus score</span>
+          <strong>{displayedDensityPercent}%</strong>
+        </article>
+        <article className="metric-card">
+          <span>Today active</span>
           <strong>{toHours(displayedDay?.activeMinutes ?? 0)}h</strong>
         </article>
         <article className="metric-card">
-          <span>{selectedDateLabel} idle</span>
+          <span>Today idle</span>
           <strong>{toHours(displayedDay?.idleMinutes ?? 0)}h</strong>
         </article>
         <article className="metric-card">
-          <span>Days tracked</span>
+          <span>Days Tracked</span>
           <strong>{storage?.persistedDayCount ?? 0}</strong>
-        </article>
-        <article className="metric-card">
-          <span>Last updated</span>
-          <strong>
-            {lastUpdated
-              ? lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-              : "--:--"}
-          </strong>
         </article>
       </section>
 
@@ -1855,6 +1986,52 @@ const App = () => {
             {shareMessage}
           </p>
         ) : null}
+      </section>
+
+      <section className="panel density-panel">
+        <div className="panel-heading density-heading">
+          <div>
+            <h2>Activity Density</h2>
+            <p>30-minute windows across {selectedDateLabel.toLowerCase()}.</p>
+          </div>
+          <strong>{displayedDensityPercent}% active</strong>
+        </div>
+        <div
+          key={`density-${displayedDay?.date ?? "empty"}`}
+          className="activity-density-chart"
+          style={densityStyle}
+          onMouseMove={handleDelegatedMouseMove}
+          onMouseLeave={hideHoverTooltip}
+        >
+          {densityBuckets.map((bucket) => {
+            const isFuture = bucket.bucketStartMinute > nowMinuteOfDay;
+            const height = isFuture
+              ? 12
+              : bucket.activeMinutes > 0
+                ? Math.round(22 + bucket.density * 78)
+                : 14;
+            const tooltip = `${formatMinuteRange(
+              bucket.bucketStartMinute,
+              DENSITY_BUCKET_MINUTES,
+            )}\n${bucket.activeMinutes}/${bucket.monitoredMinutes} active minutes`;
+
+            return (
+              <div
+                key={bucket.index}
+                className={`density-bar ${
+                  isFuture ? "future" : bucket.activeMinutes > 0 ? "active" : "idle"
+                }`}
+                data-tooltip={tooltip}
+                style={
+                  {
+                    "--density-height": `${height}%`,
+                    "--density-index": `${bucket.index}`,
+                  } as CSSProperties
+                }
+              />
+            );
+          })}
+        </div>
       </section>
 
       <section className="panel">
@@ -2003,6 +2180,7 @@ const App = () => {
         <div className="settings-grid">
           <div className="settings-card tracking-info">
             <h3>How Trackr measures activity</h3>
+            <br/>
             <p>
               Trackr samples recent keyboard and mouse activity every 15 seconds and rolls that
               into per-minute active or idle states.
