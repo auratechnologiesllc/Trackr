@@ -2,9 +2,11 @@ name: release
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+    inputs:
+      ref:
+        description: "Tag or ref to release"
+        required: true
+        default: "v1.0.3"
 
 jobs:
   release:
@@ -16,15 +18,15 @@ jobs:
         include:
           - runner: macos-latest
             target: aarch64-apple-darwin
-            bundleArgs: ""
           - runner: macos-latest
             target: x86_64-apple-darwin
-            bundleArgs: ""
 
     runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -60,9 +62,9 @@ jobs:
           TRACKR_PAYWALL_PUBLIC_KEY_DER_BASE64: ${{ secrets.TRACKR_PAYWALL_PUBLIC_KEY_DER_BASE64 }}
           TAURI_BUNDLER_DMG_IGNORE_CI: true
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Trackr ${{ github.ref_name }}"
+          tagName: ${{ github.event.inputs.ref }}
+          releaseName: "Trackr ${{ github.event.inputs.ref }}"
           releaseBody: "See the assets below to download and install Trackr."
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.target }} ${{ matrix.bundleArgs }}
+          args: --target ${{ matrix.target }}
