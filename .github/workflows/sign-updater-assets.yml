@@ -1,0 +1,100 @@
+name: sign updater assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag that already contains Trackr_*.app.tar.gz assets"
+        required: true
+        default: "v1.0.3"
+      version:
+        description: "Updater version to publish in latest.json"
+        required: true
+        default: "1.0.3"
+
+jobs:
+  sign:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download updater bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          mkdir -p release-assets
+          gh release download "$TAG" \
+            --repo auratechnologiesllc/Trackr \
+            --pattern "Trackr_*.app.tar.gz" \
+            --dir release-assets \
+            --clobber
+
+      - name: Sign updater bundles
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npx tauri signer sign \
+            --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
+            --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+            release-assets/Trackr_aarch64.app.tar.gz
+          npx tauri signer sign \
+            --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
+            --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+            release-assets/Trackr_x64.app.tar.gz
+
+      - name: Generate latest.json
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const tag = process.env.TAG;
+          const version = process.env.VERSION;
+          const baseUrl = `https://github.com/auratechnologiesllc/Trackr/releases/download/${tag}`;
+          const readSig = (name) => fs.readFileSync(`release-assets/${name}.sig`, "utf8").trim();
+
+          const latest = {
+            version,
+            notes: `Trackr ${version}`,
+            pub_date: new Date().toISOString(),
+            platforms: {
+              "darwin-aarch64": {
+                signature: readSig("Trackr_aarch64.app.tar.gz"),
+                url: `${baseUrl}/Trackr_aarch64.app.tar.gz`,
+              },
+              "darwin-x86_64": {
+                signature: readSig("Trackr_x64.app.tar.gz"),
+                url: `${baseUrl}/Trackr_x64.app.tar.gz`,
+              },
+            },
+          };
+
+          fs.writeFileSync("release-assets/latest.json", `${JSON.stringify(latest, null, 2)}\n`);
+          NODE
+
+      - name: Upload updater signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          gh release upload "$TAG" \
+            release-assets/Trackr_aarch64.app.tar.gz.sig \
+            release-assets/Trackr_x64.app.tar.gz.sig \
+            release-assets/latest.json \
+            --repo auratechnologiesllc/Trackr \
+            --clobber
