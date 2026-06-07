@@ -1336,9 +1336,9 @@ const App = () => {
     }
   };
 
-  const saveSleepWindow = async () => {
-    const startMinute = clockToMinute(sleepDraft.startTime);
-    const endMinute = clockToMinute(sleepDraft.endTime);
+  const saveSleepWindow = async (draft: SleepSettingsDraft = sleepDraft) => {
+    const startMinute = clockToMinute(draft.startTime);
+    const endMinute = clockToMinute(draft.endTime);
 
     if (startMinute === null || endMinute === null) {
       setSleepSaveError("Please use valid 24-hour times for the sleep window.");
@@ -1349,7 +1349,7 @@ const App = () => {
     setSleepSaveError(null);
     try {
       const saved = await invokeApp<SleepWindow>("set_sleep_window", {
-        enabled: sleepDraft.enabled,
+        enabled: draft.enabled,
         startMinute,
         endMinute,
       });
@@ -1386,6 +1386,14 @@ const App = () => {
         setSavingSleep(false);
       }
     }
+  };
+
+  const setSleepWindowEnabled = (enabled: boolean) => {
+    const nextDraft = { ...sleepDraft, enabled };
+    setSleepDraft(nextDraft);
+    setSleepDirty(true);
+    setSleepSaveError(null);
+    void saveSleepWindow(nextDraft);
   };
 
   const hideHoverTooltip = () => {
@@ -2106,7 +2114,7 @@ const App = () => {
                 <input
                   type="checkbox"
                   checked={sleepDraft.enabled}
-                  onChange={(event) => updateSleepDraft({ enabled: event.target.checked })}
+                  onChange={(event) => setSleepWindowEnabled(event.target.checked)}
                 />
                 <span>Enable sleep window</span>
               </label>

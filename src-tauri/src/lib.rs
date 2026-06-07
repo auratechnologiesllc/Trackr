@@ -1192,11 +1192,18 @@ impl TrackerState {
         let (mut timeline, mut app_timeline, sleep_window) = {
             let store = self.store.lock().expect("store lock poisoned");
             match store.days.get(&date_key) {
-                Some(stored_day) => (
-                    stored_day.timeline.clone(),
-                    stored_day.app_timeline.clone(),
-                    stored_day.sleep_window.clone(),
-                ),
+                Some(stored_day) => {
+                    let sleep_window = if is_today {
+                        store.sleep_window.clone()
+                    } else {
+                        stored_day.sleep_window.clone()
+                    };
+                    (
+                        stored_day.timeline.clone(),
+                        stored_day.app_timeline.clone(),
+                        sleep_window,
+                    )
+                }
                 None => (Vec::new(), Vec::new(), store.sleep_window.clone()),
             }
         };
@@ -2008,6 +2015,7 @@ fn build_activity_tray_icon(
     tracker: &TrackerState,
     today: &TodayTimeline,
     now_minute: usize,
+    sleep_window: &SleepWindow,
 ) -> Image<'static> {
     let is_blocked = !tracker.is_unlocked() || !tracker.has_required_input_access();
 
@@ -2033,7 +2041,7 @@ fn build_activity_tray_icon(
         (0..MINUTES_PER_DAY).collect()
     } else {
         (0..MINUTES_PER_DAY)
-            .filter(|minute| !today.sleep_window.contains_minute(*minute))
+            .filter(|minute| !sleep_window.contains_minute(*minute))
             .collect()
     };
     let awake_count = awake_minutes.len();
@@ -2129,6 +2137,8 @@ struct AppRuntimeProfile {
 
 fn tray_visual_snapshot(tracker: &TrackerState) -> TrayVisualSnapshot {
     let now = Local::now();
+    let now_minute = (now.hour() * 60 + now.minute()) as usize;
+    let sleep_window = tracker.sleep_window();
     let today = tracker.today_timeline();
     TrayVisualSnapshot {
         input_access_granted: tracker.has_required_input_access(),
@@ -2136,9 +2146,9 @@ fn tray_visual_snapshot(tracker: &TrackerState) -> TrayVisualSnapshot {
         date: today.date.clone(),
         active_minutes: today.active_minutes,
         currently_active: today.currently_active,
-        sleep_mode: today.sleep_mode,
-        sleep_window: today.sleep_window.clone(),
-        now_minute: (now.hour() * 60 + now.minute()) as usize,
+        sleep_mode: sleep_window.contains_minute(now_minute),
+        sleep_window,
+        now_minute,
     }
 }
 
@@ -2146,7 +2156,8 @@ fn refresh_tray_visuals(tracker: &TrackerState, tray_icon: &TrayIcon) {
     let today = tracker.today_timeline();
     let now = Local::now();
     let now_minute = (now.hour() * 60 + now.minute()) as usize;
-    let icon = build_activity_tray_icon(tracker, &today, now_minute);
+    let sleep_window = tracker.sleep_window();
+    let icon = build_activity_tray_icon(tracker, &today, now_minute, &sleep_window);
 
     if !tracker.has_required_input_access() {
         let _ = tray_icon.set_icon(Some(icon));
@@ -2162,15 +2173,15 @@ fn refresh_tray_visuals(tracker: &TrackerState, tray_icon: &TrayIcon) {
         return;
     }
 
-    let status = if today.sleep_mode {
+    let status = if sleep_window.contains_minute(now_minute) {
         "sleep mode"
     } else if today.currently_active {
         "active now"
     } else {
         "idle now"
     };
-    let sleep_suffix = if today.sleep_window.enabled {
-        format!(" • sleep {}", today.sleep_window.formatted_range())
+    let sleep_suffix = if sleep_window.enabled {
+        format!(" • sleep {}", sleep_window.formatted_range())
     } else {
         String::new()
     };
@@ -2239,8 +2250,13 @@ fn setup_tray(app: &tauri::App, tracker: &TrackerState) -> tauri::Result<TrayIco
     let menu = Menu::with_items(app, &[&toggle_item, &quit_item])?;
     let today = tracker.today_timeline();
     let now = Local::now();
-    let initial_icon =
-        build_activity_tray_icon(tracker, &today, (now.hour() * 60 + now.minute()) as usize);
+    let sleep_window = tracker.sleep_window();
+    let initial_icon = build_activity_tray_icon(
+        tracker,
+        &today,
+        (now.hour() * 60 + now.minute()) as usize,
+        &sleep_window,
+    );
 
     let tray_icon = TrayIconBuilder::new()
         .icon(initial_icon)
@@ -3031,6 +3047,50 @@ mod tests {
             serde_json::from_slice(&fs::read(&day_path).expect("read day file"))
                 .expect("parse day file");
         assert_eq!(persisted_day.sleep_window, updated_sleep_window);
+
+        if let Some(parent) = store_path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    #[test]
+    fn sleep_window_survives_restart_and_updates_today_record() {
+        let (store_path, paywall_path) = temp_paths("trackr-sleep-window-restart-test");
+        let tracker = TrackerState::new(store_path.clone(), paywall_path.clone());
+        enable_tracking_for_test(&tracker);
+
+        tracker.record_input_epoch(Utc::now().timestamp());
+        tracker
+            .persist_activity_store_if_due(true)
+            .expect("flush today record before sleep-window edit");
+
+        let updated_sleep_window = SleepWindow {
+            enabled: true,
+            start_minute: 22 * 60,
+            end_minute: 7 * 60,
+        };
+        let today_key = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let day_path = activity_day_store_path(&store_path, &today_key);
+
+        tracker
+            .set_sleep_window(updated_sleep_window.clone())
+            .expect("save sleep window with a today record");
+
+        let settings: ActivityStoreSettings =
+            serde_json::from_slice(&fs::read(&store_path).expect("read activity settings"))
+                .expect("parse activity settings");
+        let persisted_day: StoredDay =
+            serde_json::from_slice(&fs::read(&day_path).expect("read today day file"))
+                .expect("parse today day file");
+        assert_eq!(settings.sleep_window, updated_sleep_window);
+        assert_eq!(persisted_day.sleep_window, updated_sleep_window);
+
+        let restarted = TrackerState::new(store_path.clone(), paywall_path);
+        assert_eq!(restarted.sleep_window(), updated_sleep_window);
+        assert_eq!(
+            restarted.today_timeline().sleep_window,
+            updated_sleep_window
+        );
 
         if let Some(parent) = store_path.parent() {
             let _ = fs::remove_dir_all(parent);
